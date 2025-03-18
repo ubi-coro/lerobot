@@ -101,6 +101,11 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
     max_relative_target: int | None = 5
 
+    # The duration of the velocity-based time profile
+    # Higher values lead to smoother motions, but increase lag.
+    # Only applicable to aloha
+    moving_time: float = 0.1
+
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(

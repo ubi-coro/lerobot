@@ -389,11 +389,20 @@ class ManipulatorRobot:
                 elbow_idx = arm.read("ID", "elbow")
                 arm.write("Secondary_ID", elbow_idx, "elbow_shadow")
 
+        def set_drive_mode_(arm):
+            # set the drive mode to time-based profile to set moving time via velocity profiles
+            drive_mode = arm.read('Drive_Mode')
+            for i in range(len(arm.motor_names)):
+                drive_mode[i] |= 1 << 2  # set third bit to enable time-based profiles
+            arm.write('Drive_Mode', drive_mode)
+
         for name in self.follower_arms:
             set_shadow_(self.follower_arms[name])
+            set_drive_mode_(self.follower_arms[name])
 
         for name in self.leader_arms:
             set_shadow_(self.leader_arms[name])
+            set_drive_mode_(self.leader_arms[name])
 
         for name in self.follower_arms:
             # Set a velocity limit of 131 as advised by Trossen Robotics
@@ -418,6 +427,13 @@ class ManipulatorRobot:
 
             # Note: We can't enable torque on the leader gripper since "xc430-w150" doesn't have
             # a Current Controlled Position mode.
+
+        # set time profile after setting operation mode
+        for name in self.follower_arms:
+            self.follower_arms[name].write("Profile_Velocity", int(self.config.moving_time * 1000))
+
+        for name in self.leader_arms:
+            self.leader_arms[name].write("Profile_Velocity", int(self.config.moving_time * 1000))
 
         if self.config.gripper_open_degree is not None:
             warnings.warn(
