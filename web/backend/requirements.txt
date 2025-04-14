@@ -1,0 +1,9 @@
+flask==2.2.3
+flask-cors==3.0.10
+flask-socketio==5.3.2
+python-engineio==4.3.4
+python-socketio==5.7.2
+eventlet==0.33.3
+numpy==1.22.4
+pillow==9.4.0
+opencv-python==4.7.0.72
