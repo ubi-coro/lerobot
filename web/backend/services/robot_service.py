@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 import numpy as np
 import time
+import cv2
 from threading import Thread
 
 # Import LeRobot modules
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.utils.utils import init_hydra_config
+from lerobot.common.robot_devices.robots.utils import make_robot_from_config as make_robot
+from lerobot.configs import parser
 from lerobot.scripts.control_robot import calibrate, teleoperate, record
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,7 @@ class RobotService:
                 }
             else:
                 # Initialize robot configuration
-                self.robot_cfg = init_hydra_config(robot_config, robot_overrides)
+                self.robot_cfg = parser.parse_config(robot_config, overrides=robot_overrides)
                 self.robot = make_robot(self.robot_cfg)
                 
                 # Connect to robot
