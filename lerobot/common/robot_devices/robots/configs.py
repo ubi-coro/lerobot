@@ -110,7 +110,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(
                 # window_x
-                port="/dev/ttyDXL_leader_left",
+                port="/dev/ttyDXL_master_left",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm430-w350"],
@@ -126,7 +126,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
             ),
             "right": DynamixelMotorsBusConfig(
                 # window_x
-                port="/dev/ttyDXL_leader_right",
+                port="/dev/ttyDXL_master_right",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm430-w350"],
@@ -146,7 +146,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(
-                port="/dev/ttyDXL_follower_left",
+                port="/dev/ttyDXL_puppet_left",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm540-w270"],
@@ -161,7 +161,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
                 },
             ),
             "right": DynamixelMotorsBusConfig(
-                port="/dev/ttyDXL_follower_right",
+                port="/dev/ttyDXL_puppet_right",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm540-w270"],

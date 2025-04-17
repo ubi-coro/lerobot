@@ -199,6 +199,7 @@ def calibrate(robot: Robot, cfg: CalibrateControlConfig):
 
     for arm_id in arms:
         arm_calib_path = robot.calibration_dir / f"{arm_id}.json"
+        print(arm_calib_path)
         if arm_calib_path.exists():
             print(f"Removing '{arm_calib_path}'")
             arm_calib_path.unlink()
