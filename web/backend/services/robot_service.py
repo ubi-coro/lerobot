@@ -21,7 +21,12 @@ class MockRobot:
         self.robot_type = robot_type
         self.connected = False
         self.available_arms = ["left_arm", "right_arm"]
-        self.cameras = [MockCamera("front_camera"), MockCamera("wrist_camera")]
+        self.cameras = [
+            MockCamera("cam_high"),
+            MockCamera("cam_low"),
+            MockCamera("cam_left_wrist"),
+            MockCamera("cam_right_wrist")
+        ]
     
     def connect(self):
         self.connected = True

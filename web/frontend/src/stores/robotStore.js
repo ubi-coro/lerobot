@@ -41,7 +41,7 @@ export const useRobotStore = defineStore('robot', {
         });
         
         this.socket.on('camera_frame', (data) => {
-          // Update camera stream for the specified camera
+          console.log(`Received frame from camera ${data.camera_id}`);
           if (data.camera_id && data.frame) {
             this.cameraStreams[data.camera_id] = `data:image/jpeg;base64,${data.frame}`;
           }

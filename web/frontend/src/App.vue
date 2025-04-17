@@ -28,14 +28,14 @@
         <li class="nav-item mb-1">
           <router-link to="/datasets" class="nav-link text-light d-flex align-items-center" active-class="active">
             <i class="bi bi-database me-2"></i>
-            <span v-if="!sidebarCollapsed">Datasets</span>
+            <span v-if="!sidebarCollapsed">Datasets (Under Construction)</span>
           </router-link>
         </li>
         
         <li class="nav-item mb-1">
           <router-link to="/policies" class="nav-link text-light d-flex align-items-center" active-class="active">
             <i class="bi bi-gear me-2"></i>
-            <span v-if="!sidebarCollapsed">Policies</span>
+            <span v-if="!sidebarCollapsed">Policies (Under Construction)</span>
           </router-link>
         </li>
       </ul>

@@ -11,6 +11,15 @@
       </div>
       
       <div class="mb-3">
+        <label for="operationMode" class="form-label">Operation Mode</label>
+        <select id="operationMode" v-model="operationMode" class="form-select" :disabled="isLoading">
+          <option value="bimanual">Bimanual (Both Arms)</option>
+          <option value="right_only">Single-Handed (Right Arm Only)</option>
+          <option value="left_only">Single-Handed (Left Arm Only)</option>
+        </select>
+      </div>
+      
+      <div class="mb-3">
         <label for="robotOverrides" class="form-label">Robot Overrides (optional)</label>
         <input 
           type="text" 
@@ -20,6 +29,9 @@
           placeholder="e.g. port=[PORT] or ~cameras" 
           :disabled="isLoading"
         />
+        <small class="form-text text-muted">
+          Additional overrides will be combined with the operation mode selection.
+        </small>
       </div>
       
       <div class="d-grid">
@@ -85,6 +97,7 @@ const robotStore = useRobotStore();
 
 const selectedConfig = ref('');
 const robotOverrides = ref('');
+const operationMode = ref('bimanual'); // Default to bimanual operation
 
 // Computed properties
 const isConnected = computed(() => robotStore.isConnected);
@@ -111,13 +124,23 @@ watch(configs, (newConfigs) => {
 // Methods
 const connectRobot = async () => {
   try {
-    // Parse overrides if provided
-    let overrides = null;
-    if (robotOverrides.value) {
-      overrides = robotOverrides.value.split(' ');
+    // Start with user-provided overrides
+    let overrides = robotOverrides.value.trim();
+    
+    // Add operation mode overrides
+    if (operationMode.value === 'right_only') {
+      // Exclude left arms for right-only operation
+      overrides = `${overrides} ~leader_arms.left ~follower_arms.left`.trim();
+    } else if (operationMode.value === 'left_only') {
+      // Exclude right arms for left-only operation
+      overrides = `${overrides} ~leader_arms.right ~follower_arms.right`.trim();
     }
     
-    await robotStore.connectRobot(selectedConfig.value, overrides);
+    // Convert to array if not empty
+    const overridesArray = overrides ? overrides.split(' ') : null;
+    
+    // Connect with operation mode
+    await robotStore.connectRobot(selectedConfig.value, overridesArray);
   } catch (error) {
     console.error('Error connecting to robot:', error);
   }
