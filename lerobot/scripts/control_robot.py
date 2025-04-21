@@ -278,7 +278,7 @@ def record(
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
-    enable_teleoperation = policy is None
+    enable_teleoperation = True #policy is None
     log_say("Warmup record", cfg.play_sounds)
     warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_cameras, cfg.fps)
 
