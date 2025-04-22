@@ -28,9 +28,13 @@ from lerobot.configs.train import TrainPipelineConfig
 
 def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
+    dataset_tag = cfg.dataset.repo_id
+    if dataset_tag.startswith('['):
+        tags = dataset_tag.strip('[]').split(',')
+        dataset_tag = f"{tags[0].strip()}_and_more"
     lst = [
         f"policy:{cfg.policy.type}",
-        f"dataset:{cfg.dataset.repo_id}",
+        f"dataset:{dataset_tag}",
         f"seed:{cfg.seed}",
     ]
     if cfg.env is not None:
