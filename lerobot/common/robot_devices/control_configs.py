@@ -118,6 +118,27 @@ class RemoteRobotConfig(ControlConfig):
     log_interval: int = 100
 
 
+@ControlConfig.register_subclass("mpn")
+@dataclass
+class MPNControlConfig(ControlConfig):
+    primitives: List[PrimitiveConfig] = field(default_factory=list)
+    transitions: List[TransitionConfig] = field(default_factory=list)
+    initial_primitive: str = ""
+    repeat_node: bool = false
+
+@dataclass
+class PrimitiveConfig:
+    name: str
+    type: str
+    params: Dict[str, any] = field(default_factory=dict)
+
+@dataclass
+class TransitionConfig:
+    source: str
+    target: str
+    type: str  # "Condition", "LearnableCondition"
+    params: Dict[str, any] = field(default_factory=dict)
+
 @dataclass
 class ControlPipelineConfig:
     robot: RobotConfig

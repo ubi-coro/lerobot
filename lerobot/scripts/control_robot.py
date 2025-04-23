@@ -149,6 +149,7 @@ from lerobot.common.robot_devices.control_configs import (
     RemoteRobotConfig,
     ReplayControlConfig,
     TeleoperateControlConfig,
+    MPNControlConfig
 )
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
@@ -363,6 +364,20 @@ def replay(
         log_control_info(robot, dt_s, fps=cfg.fps)
 
 
+@safe_disconnect
+def mpn(
+    robot: Robot,
+    cfg: MPNControlConfig
+):
+    mpn_control_loop(
+        robot,
+        primitives=cfg.primitives,
+        transitions=cfg.transitions,
+        initial_primitive=cfg.initial_primitive,
+        repeat_node=repeat_node
+    )
+
+
 @parser.wrap()
 def control_robot(cfg: ControlPipelineConfig):
     init_logging()
@@ -382,6 +397,8 @@ def control_robot(cfg: ControlPipelineConfig):
         from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
 
         run_lekiwi(cfg.robot)
+    elif isinstance(cfg.control, MPNControlConfig):
+        mpn(robot, cfg.control)
 
     if robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process
