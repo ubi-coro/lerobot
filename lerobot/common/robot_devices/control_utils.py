@@ -186,6 +186,9 @@ def warmup_record(
         teleoperate=enable_teleoperation,
     )
 
+    if fps is not None:
+        busy_wait(3 / fps)
+
 
 def record_episode(
     robot,
@@ -279,7 +282,7 @@ def control_loop(
             busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - start_loop_t
-        log_control_info(robot, dt_s, fps=fps)
+        #log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_episode_t
         if events["exit_early"]:
@@ -289,6 +292,8 @@ def control_loop(
 
 def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
+    busy_wait(1.0 / fps)
+
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
