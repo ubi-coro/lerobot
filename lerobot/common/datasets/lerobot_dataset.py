@@ -1045,7 +1045,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         root: str | Path | None = None,
         episodes: dict | None = None,
         image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
+        delta_timestamps: dict[str, dict[list[float]]] | None = None,
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
@@ -1053,7 +1053,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_ids = repo_ids
         self.root = Path(root) if root else HF_LEROBOT_HOME
-        self.tolerances_s = tolerances_s if tolerances_s else {repo_id: 1e-4 for repo_id in repo_ids}
+        self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
         self._datasets = [
@@ -1062,7 +1062,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 root=self.root / repo_id,
                 episodes=episodes[repo_id] if episodes else None,
                 image_transforms=image_transforms,
-                delta_timestamps=delta_timestamps,
+                delta_timestamps=delta_timestamps[repo_id],
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,

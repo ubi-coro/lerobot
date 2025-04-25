@@ -87,7 +87,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     # Specific to Aloha, LeRobot comes with default calibration files. Assuming the motors have been
     # properly assembled, no manual calibration step is expected. If you need to run manual calibration,
     # simply update this path to ".cache/calibration/aloha"
-    calibration_dir: str = ".cache/calibration/aloha_default"
+    calibration_dir: str = "/home/jannick/PycharmProjects/lerobot/.cache/calibration/aloha_lemgo_tabea"
 
     # /!\ FOR SAFETY, READ THIS /!\
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
@@ -184,25 +184,25 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "cam_high": IntelRealSenseCameraConfig(
-                serial_number=128422271347,
+                serial_number=130322274116,
                 fps=30,
                 width=640,
                 height=480,
             ),
             "cam_low": IntelRealSenseCameraConfig(
-                serial_number=130322270656,
+                serial_number=130322272007,
                 fps=30,
                 width=640,
                 height=480,
             ),
             "cam_left_wrist": IntelRealSenseCameraConfig(
-                serial_number=218622272670,
+                serial_number=218622276088,
                 fps=30,
                 width=640,
                 height=480,
             ),
             "cam_right_wrist": IntelRealSenseCameraConfig(
-                serial_number=130322272300,
+                serial_number=218622270253,
                 fps=30,
                 width=640,
                 height=480,

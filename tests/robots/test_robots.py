@@ -54,7 +54,7 @@ def test_robot(tmp_path, request, robot_type, mock):
 
     if robot_type == "aloha" and mock:
         # To simplify unit test, we do not rerun manual calibration for Aloha mock=True.
-        # Instead, we use the files from '.cache/calibration/aloha_default'
+        # Instead, we use the files from '.cache/calibration/aloha_lemgo_tabea'
         pass
     else:
         if mock:
