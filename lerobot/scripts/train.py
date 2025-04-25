@@ -137,10 +137,10 @@ def train(cfg: TrainPipelineConfig):
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Creating policy")
-    if isinstance(offline_dataset, MultiLeRobotDataset):
-        ds_meta = offline_dataset._datasets[0].meta
+    if isinstance(dataset, MultiLeRobotDataset):
+        ds_meta = dataset._datasets[0].meta
     else:
-        ds_meta = offline_dataset.meta
+        ds_meta = dataset.meta
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=ds_meta,
