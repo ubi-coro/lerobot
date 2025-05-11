@@ -33,6 +33,8 @@ from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
+from lerobot.common.robot_devices.robots.manipulator import ensure_safe_goal_position
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
@@ -128,7 +130,7 @@ def predict_action(observation, policy, device, use_amp):
     return action
 
 
-def init_keyboard_listener():
+def init_keyboard_listener(interactive: bool = False):
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -136,6 +138,7 @@ def init_keyboard_listener():
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    events["intervention"] = False
 
     if is_headless():
         logging.warning(
@@ -156,6 +159,13 @@ def init_keyboard_listener():
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
+            elif key == keyboard.Key.space:
+                if events["intervention"]:
+                    print("Space key pressed. The policy is back in charge in charge...")
+                    events["intervention"] = False
+                else:
+                    print("Space key pressed. You are now in charge in charge...")
+                    events["intervention"] = True
             elif key == keyboard.Key.esc:
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
@@ -196,6 +206,7 @@ def record_episode(
     policy,
     fps,
     single_task,
+    interactive
 ):
     control_loop(
         robot=robot,
@@ -207,15 +218,17 @@ def record_episode(
         fps=fps,
         teleoperate=policy is None,
         single_task=single_task,
+        interactive=interactive
     )
 
 
 @safe_stop_image_writer
 def control_loop(
     robot,
-    control_time_s=None,
-    teleoperate=False,
-    display_data=False,
+    control_time_s: float | None = None,
+    teleoperate: bool = False,
+    interactive: bool = False,
+    display_data: bool = False,
     dataset: LeRobotDataset | None = None,
     events=None,
     policy: PreTrainedPolicy = None,
@@ -235,6 +248,9 @@ def control_loop(
     if teleoperate and policy is not None:
         raise ValueError("When `teleoperate` is True, `policy` should be None.")
 
+    if interactive and policy is None:
+        raise ValueError("When `dagger` is True, `policy` should not be None.")
+
     if dataset is not None and single_task is None:
         raise ValueError("You need to provide a task as argument in `single_task`.")
 
@@ -246,8 +262,8 @@ def control_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
-        if teleoperate:
-            observation, action = robot.teleop_step(record_data=True)
+        if teleoperate or events["intervention"]:
+            observation, action = teleop_step(robot)
         else:
             observation = robot.capture_observation()
 
@@ -260,7 +276,12 @@ def control_loop(
                 action = robot.send_action(pred_action)
                 action = {"action": action}
 
-        if dataset is not None:
+            # Send follower position to the leader
+            if interactive:
+                reverse_teleop_step(robot)
+
+        # when interactive, only store frames if the human intervenes
+        if dataset is not None and (not interactive or events["intervention"]):
             frame = {**observation, **action, "task": single_task}
             dataset.add_frame(frame)
 
@@ -345,3 +366,27 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
+def teleop_step(robot):
+    for name in robot.follower_arms:
+        if (robot.leader_arms[name].read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+            robot.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+    return robot.teleop_step(record_data=True)
+
+def reverse_teleop_step(robot):
+    for name in robot.follower_arms:
+        if (robot.leader_arms[name].read("Torque_Enable") != TorqueMode.ENABLED.value).any():
+            robot.leader_arms[name].write("Torque_Enable", TorqueMode.ENABLED.value)
+
+        goal_pos = robot.follower_arms[name].read("Present_Position")
+
+        # Cap goal position when too far away from present position.
+        # Slower fps expected due to reading from the follower.
+        if robot.config.max_relative_target is not None:
+            present_pos = robot.leader_arms[name].read("Present_Position")
+            present_pos = torch.from_numpy(present_pos)
+            goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+
+        goal_pos = goal_pos.numpy().astype(np.float32)
+        robot.leader_arms[name].write("Goal_Position", goal_pos)
+

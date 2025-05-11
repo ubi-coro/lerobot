@@ -277,7 +277,7 @@ def record(
     if not robot.is_connected:
         robot.connect()
 
-    listener, events = init_keyboard_listener()
+    listener, events = init_keyboard_listener(interactive=cfg.interactive)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -305,6 +305,7 @@ def record(
             policy=policy,
             fps=cfg.fps,
             single_task=cfg.single_task,
+            interactive=cfg.interactive
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
