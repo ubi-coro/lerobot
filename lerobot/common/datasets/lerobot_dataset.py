@@ -843,6 +843,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
+        else:
+            episode_buffer = episode_data
+
+        if episode_buffer is None:
+            raise ValueError("Episode buffer is empty. You need to add frames with add_frame first.")
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 

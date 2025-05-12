@@ -90,9 +90,20 @@ class RobotService:
         self.stop_event = threading.Event()
         self.use_mock = use_mock
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self):
         """Get current robot status"""
-        return self.status
+        status = {
+            "connected": self.status["connected"],
+            "error": self.status["error"]
+        }
+        
+        # If connected, add Aloha-specific information
+        if self.status["connected"]:
+            # Add default arms even if not detected from robot
+            status["available_arms"] = ["left_leader", "right_leader", "left_follower", "right_follower"]
+            status["cameras"] = ["cam_high", "cam_low", "cam_left_wrist", "cam_right_wrist"]
+        
+        return status
 
     def connect(self, robot_config: str, robot_overrides: Optional[List[str]] = None) -> Dict[str, Any]:
         """Connect to the robot with the specified configuration"""

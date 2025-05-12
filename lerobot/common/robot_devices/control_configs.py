@@ -63,7 +63,7 @@ class RecordControlConfig(ControlConfig):
     # Number of seconds for resetting the environment after each episode.
     reset_time_s: int | float = 10
     # Number of episodes to record.
-    num_episodes: int = 100
+    num_episodes: int = 50
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.

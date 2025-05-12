@@ -74,7 +74,12 @@ def disconnect_robot():
 def get_robot_status():
     """Get current robot status"""
     status = robot_service.get_status()
-    return jsonify(status)
+    # Add debug logging to see what's being sent
+    logger.info(f"Sending robot status: {status}")
+    return jsonify({
+        "status": "success",
+        "data": status
+    })
 
 @bp.route('/teleoperate/start', methods=['POST'])
 def start_teleoperation():

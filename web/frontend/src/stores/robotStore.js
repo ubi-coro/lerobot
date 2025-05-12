@@ -62,9 +62,30 @@ export const useRobotStore = defineStore('robot', {
       try {
         this.isLoading = true;
         const response = await robotApi.getConfigs();
-        this.configs = response.data;
+        
+        // Debug the response
+        console.log('Original configs response:', response);
+        
+        // Safely extract configs
+        if (response && response.data) {
+          if (Array.isArray(response.data)) {
+            this.configs = response.data;
+          } else if (response.data.data && Array.isArray(response.data.data)) {
+            this.configs = response.data.data;
+          } else {
+            console.error('Invalid configs format:', response.data);
+            this.configs = []; // Ensure it's always an array
+          }
+        } else {
+          this.configs = [];
+        }
+        
+        console.log('Processed configs:', this.configs);
       } catch (error) {
-        console.error('Error fetching robot configs:', error);
+        console.error('Error fetching configs:', error);
+        this.hasError = true;
+        this.errorMessage = 'Failed to fetch robot configurations';
+        this.configs = []; // Ensure it's always an array
       } finally {
         this.isLoading = false;
       }
@@ -236,3 +257,15 @@ export const useRobotStore = defineStore('robot', {
     }
   }
 });
+
+// In robotStore.js
+const fetchRobotStatus = async () => {
+  try {
+    const response = await robotApi.getStatus();
+    // Make sure you're extracting the data field from the response
+    state.status = response.data.data; 
+    console.log("Updated robot status:", state.status);
+  } catch (error) {
+    console.error('Error fetching robot status:', error);
+  }
+};

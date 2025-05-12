@@ -23,6 +23,7 @@ export default {
   
   // Get robot status
   getStatus() {
+    console.log('Fetching robot status...');
     return axios.get(`${API_URL}/status`);
   },
   

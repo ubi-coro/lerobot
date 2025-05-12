@@ -23,6 +23,7 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+import numpy as np
 
 import rerun as rr
 import torch
@@ -196,9 +197,6 @@ def warmup_record(
         teleoperate=enable_teleoperation,
     )
 
-    if fps is not None:
-        busy_wait(3 / fps)
-
 
 def record_episode(
     robot,
@@ -303,7 +301,7 @@ def control_loop(
             busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - start_loop_t
-        #log_control_info(robot, dt_s, fps=fps)
+        log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_episode_t
         if events["exit_early"]:
@@ -313,8 +311,6 @@ def control_loop(
 
 def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
-    busy_wait(1.0 / fps)
-
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
@@ -387,11 +383,35 @@ def reverse_teleop_step(robot):
 
         # Cap goal position when too far away from present position.
         # Slower fps expected due to reading from the follower.
+        #if robot.config.max_relative_target is not None:
+        #    present_pos = robot.leader_arms[name].read("Present_Position")
+        #    present_pos = torch.from_numpy(present_pos)
+        #    goal_pos = ensure_safe_goal_position(goal_pos, present_pos, robot.config.max_relative_target)
+
+
+        #goal_pos = goal_pos.numpy().astype(np.float32)
+
+        ###test
         if robot.config.max_relative_target is not None:
             present_pos = robot.leader_arms[name].read("Present_Position")
-            present_pos = torch.from_numpy(present_pos)
-            goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
-        goal_pos = goal_pos.numpy().astype(np.float32)
+            # Convert goal_pos to tensor to match present_pos type
+            goal_pos_tensor = torch.from_numpy(goal_pos)
+            present_pos_tensor = torch.from_numpy(present_pos)
+
+            # Now both are tensors for the ensure_safe_goal_position function
+            goal_pos_tensor = ensure_safe_goal_position(
+                goal_pos_tensor,
+                present_pos_tensor,
+                robot.config.max_relative_target
+            )
+
+            # Convert back to numpy for the write operation
+            goal_pos = goal_pos_tensor.numpy()
+
+            # Ensure the right data type
+        goal_pos = goal_pos.astype(np.float32)
+        ###test
+
         robot.leader_arms[name].write("Goal_Position", goal_pos)
 

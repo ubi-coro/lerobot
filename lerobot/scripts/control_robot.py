@@ -204,7 +204,6 @@ def calibrate(robot: Robot, cfg: CalibrateControlConfig):
 
     for arm_id in arms:
         arm_calib_path = robot.calibration_dir / f"{arm_id}.json"
-        print(arm_calib_path)
         if arm_calib_path.exists():
             print(f"Removing '{arm_calib_path}'")
             arm_calib_path.unlink()
@@ -309,6 +308,10 @@ def record(
             interactive=cfg.interactive
         )
 
+        # Reset intervention state to ensure next episode starts with policy control
+        if cfg.interactive:
+            events["intervention"] = False
+
         # Execute a few seconds without recording to give time to manually reset the environment
         # Current code logic doesn't allow to teleoperate during this time.
         # TODO(rcadene): add an option to enable teleoperation during reset
@@ -317,8 +320,7 @@ def record(
             (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
-            (reset_environment
-             (robot, events, cfg.reset_time_s, cfg.fps))
+            reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)

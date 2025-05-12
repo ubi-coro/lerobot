@@ -66,7 +66,7 @@
       <div v-if="status.cameras && status.cameras.length" class="mb-3">
         <strong>Cameras:</strong>
         <ul class="list-unstyled mb-0">
-          <li v-for="camera in status.cameras" :key="camera.id">{{ camera.name }}</li>
+          <li v-for="camera in status.cameras" :key="camera">{{ camera }}</li>
         </ul>
       </div>
       
@@ -81,6 +81,15 @@
           Disconnect
         </button>
       </div>
+      
+      <div class="d-grid mt-3">
+        <button 
+          class="btn btn-primary" 
+          @click="startTeleoperation" 
+          :disabled="!isConnected || isLoading">
+          Start Teleoperation
+        </button>
+      </div>
     </div>
     
     <div v-if="hasError" class="alert alert-danger mt-3">
@@ -92,6 +101,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRobotStore } from '@/stores/robotStore';
+import robotApi from '@/services/api/robotApi';  // Make sure to import robotApi
 
 const robotStore = useRobotStore();
 
@@ -109,15 +119,33 @@ const errorMessage = computed(() => robotStore.errorMessage);
 
 // For Aloha, select it by default
 watch(configs, (newConfigs) => {
-  if (newConfigs.length > 0 && !selectedConfig.value) {
-    // Find Aloha config
-    const alohaConfig = newConfigs.find(config => config.name.toLowerCase().includes('aloha'));
-    if (alohaConfig) {
+  console.log('Configs changed:', newConfigs);
+  
+  // Guard against non-array values
+  const configsArray = Array.isArray(newConfigs) ? newConfigs : [];
+  
+  if (configsArray.length > 0 && !selectedConfig.value) {
+    console.log('Finding default config from:', configsArray);
+    
+    // Find Aloha config (with additional safety checks)
+    const alohaConfig = configsArray.find(config => 
+      config && typeof config === 'object' && config.name && 
+      typeof config.name === 'string' && config.name.toLowerCase().includes('aloha')
+    );
+    
+    if (alohaConfig && alohaConfig.path) {
+      console.log('Selected Aloha config:', alohaConfig);
       selectedConfig.value = alohaConfig.path;
-    } else {
-      // Default to first config
-      selectedConfig.value = newConfigs[0].path;
+    } else if (configsArray[0] && configsArray[0].path) {
+      console.log('Selected first config:', configsArray[0]);
+      selectedConfig.value = configsArray[0].path;
     }
+  }
+});
+
+watch(() => robotStore.isConnected, (newConnected) => {
+  if (newConnected) {
+    updateRobotStatus();
   }
 });
 
@@ -141,6 +169,28 @@ const connectRobot = async () => {
     
     // Connect with operation mode
     await robotStore.connectRobot(selectedConfig.value, overridesArray);
+    
+    // Add this debugging line
+    console.log('Connection response:', robotStore.status);
+
+    // Debugging robot status
+    setTimeout(async () => {
+      const response = await robotStore.fetchRobotStatus();
+      console.log('Explicit status fetch:', response);
+    }, 1000);
+    
+    // Automatically redirect to teleoperation after successful connection
+    if (robotStore.isConnected) {
+      // Hardcode the Aloha configuration if status isn't showing arms
+      if (!robotStore.status.available_arms || robotStore.status.available_arms.length === 0) {
+        console.log("Adding default Aloha configuration");
+        robotStore.status = {
+          ...robotStore.status,
+          available_arms: ["left_leader", "right_leader", "left_follower", "right_follower"],
+          cameras: ["cam_high", "cam_low", "cam_left_wrist", "cam_right_wrist"]
+        };
+      }
+    }
   } catch (error) {
     console.error('Error connecting to robot:', error);
   }
@@ -157,6 +207,48 @@ const disconnectRobot = async () => {
 const getConfigName = (configPath) => {
   const config = configs.value.find(c => c.path === configPath);
   return config ? config.name : configPath;
+};
+
+const updateRobotStatus = async () => {
+  try {
+    await robotStore.fetchRobotStatus();
+    console.log('Robot status:', robotStore.status);
+  } catch (error) {
+    console.error('Error fetching robot status:', error);
+  }
+};
+
+const fetchConfigs = async () => {
+  try {
+    const response = await robotApi.getConfigs();
+    console.log('Robot configs response:', response);
+    
+    // Make sure we're getting the configs array correctly
+    if (response && response.data && Array.isArray(response.data.data)) {
+      configs.value = response.data.data;
+    } else if (response && response.data && Array.isArray(response.data)) {
+      configs.value = response.data;
+    } else {
+      console.error('Invalid configs response format:', response);
+      configs.value = [];
+    }
+    
+    // If we have configs, set the first one as selected by default
+    if (configs.value.length > 0) {
+      selectedConfig.value = configs.value[0].type;
+    }
+  } catch (error) {
+    console.error('Error fetching robot configurations:', error);
+    configs.value = [];
+  }
+};
+
+const startTeleoperation = async () => {
+  try {
+    await robotStore.startTeleoperation(30, true); // 30 FPS with camera display
+  } catch (error) {
+    console.error('Error starting teleoperation:', error);
+  }
 };
 
 // Fetch configs on mount
