@@ -18,6 +18,7 @@
 
 
 import logging
+import numpy as np
 import time
 import traceback
 from contextlib import nullcontext
@@ -310,6 +311,8 @@ def control_loop(
 
 def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
+    busy_wait(1.0 / fps)
+
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
@@ -384,9 +387,24 @@ def reverse_teleop_step(robot):
         # Slower fps expected due to reading from the follower.
         if robot.config.max_relative_target is not None:
             present_pos = robot.leader_arms[name].read("Present_Position")
-            present_pos = torch.from_numpy(present_pos)
-            goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
-        goal_pos = goal_pos.numpy().astype(np.float32)
+            # Convert goal_pos to tensor to match present_pos type
+            goal_pos_tensor = torch.from_numpy(goal_pos)
+            present_pos_tensor = torch.from_numpy(present_pos)
+
+            # Now both are tensors for the ensure_safe_goal_position function
+            goal_pos_tensor = ensure_safe_goal_position(
+                goal_pos_tensor,
+                present_pos_tensor,
+                robot.config.max_relative_target
+            )
+
+            # Convert back to numpy for the write operation
+            goal_pos = goal_pos_tensor.numpy()
+
+        # Ensure the right data type
+        goal_pos = goal_pos.astype(np.float32)
+
         robot.leader_arms[name].write("Goal_Position", goal_pos)
+
 
