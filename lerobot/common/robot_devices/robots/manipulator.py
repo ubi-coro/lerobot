@@ -248,10 +248,11 @@ class ManipulatorRobot:
 
         # We assume that at connection time, arms are in a rest position, and torque can
         # be safely disabled to run calibration and/or set robot preset configurations.
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
-        for name in self.leader_arms:
-            self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+        # I do not make this assumption!
+        #for name in self.follower_arms:
+        #    self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+        #for name in self.leader_arms:
+        #    self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
 
         self.activate_calibration()
 
@@ -276,6 +277,7 @@ class ManipulatorRobot:
             # Set the leader arm in torque mode with the gripper motor set to an angle. This makes it possible
             # to squeeze the gripper and have it spring back to an open position on its own.
             for name in self.leader_arms:
+                self.leader_arms[name].write("Torque_Enable", 0)
                 self.leader_arms[name].write("Torque_Enable", 1, "gripper")
                 self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
 
@@ -310,13 +312,21 @@ class ManipulatorRobot:
 
                 if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
                     from lerobot.common.robot_devices.robots.dynamixel_calibration import run_arm_calibration
+                    from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
+
+                    if not all(arm.read("Torque_Enable") == TorqueMode.DISABLED.value):
+                        input(f"Press <enter> to disable the torque of {self.robot_type} {name} {arm_type}... ")
+                        arm.write("Torque_Enable", TorqueMode.DISABLED.value)
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
                 elif self.robot_type in ["so100", "moss", "lekiwi"]:
-                    from lerobot.common.robot_devices.robots.feetech_calibration import (
-                        run_arm_manual_calibration,
-                    )
+                    from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
+                    from lerobot.common.robot_devices.motors.feetech import TorqueMode
+
+                    if not all(arm.read("Torque_Enable") == TorqueMode.DISABLED.value):
+                        input(f"Press <enter> to disable the torque of {self.robot_type} {name} {arm_type}... ")
+                        arm.write("Torque_Enable", TorqueMode.DISABLED.value)
 
                     calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
 

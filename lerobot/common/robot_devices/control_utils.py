@@ -18,13 +18,16 @@
 
 
 import logging
-import numpy as np
+import threading
 import time
 import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from typing import Optional
 
+import evdev
+import numpy as np
 import rerun as rr
 import torch
 from deepdiff import DeepDiff
@@ -104,7 +107,7 @@ def is_headless():
         return True
 
 
-def predict_action(observation, policy, device, use_amp):
+def predict_action(observation, policy, device, use_amp, single_task=None):
     observation = copy(observation)
     with (
         torch.inference_mode(),
@@ -112,11 +115,17 @@ def predict_action(observation, policy, device, use_amp):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            if isinstance(observation[name], str):
+                continue
+
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
+
+        if single_task is not None:
+            observation["task"] = [single_task]
 
         # Compute the next action with the policy
         # based on the current observation
@@ -126,20 +135,65 @@ def predict_action(observation, policy, device, use_amp):
         action = action.squeeze(0)
 
         # Move to cpu, if not already the case
-        action = action.to("cpu")
+        action = action.to("cpu", dtype=torch.float32)
 
     return action
 
 
-def init_keyboard_listener(interactive: bool = False):
+class ControlEvents:
+    def __init__(self, event_dict: dict, foot_switches: Optional[dict] = None):
+        self._event_dict = copy(event_dict)
+        self._foot_switch_threads = dict()
+
+        for event_name in foot_switches:
+            assert event_name in self._event_dict
+            fs_params = foot_switches[event_name]
+            self._foot_switch_threads[event_name] = FootSwitchHandler(
+                device_path=f'/dev/input/event{fs_params["device"]}',
+                toggle=bool(fs_params["toggle"]),
+                event_name=event_name
+            )
+            self._foot_switch_threads[event_name].start()
+
+    def __getitem__(self, key):
+        assert key in self._event_dict
+        return self._event_dict[key]
+
+    def __setitem__(self, key, value):
+        assert key in self._event_dict
+        self._event_dict[key] = value
+
+    def __len__(self):
+        len(self._event_dict)
+
+    def update(self):
+        for handler in self._foot_switch_threads.values():
+            self._event_dict.update(handler.keyboard_events)
+
+    def stop(self):
+        for handler in self._foot_switch_threads.values():
+            handler.stop()
+
+    def reset(self):
+        self._event_dict = dict.fromkeys(self._event_dict, False)
+        for handler in self._foot_switch_threads.values():
+            handler.reset()
+
+
+def init_keyboard_listener(foot_switches: Optional[dict] = None, interactive: bool = False):
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
-    events = {}
-    events["exit_early"] = False
-    events["rerecord_episode"] = False
-    events["stop_recording"] = False
-    events["intervention"] = False
+    foot_switches = dict() if foot_switches is None else foot_switches
+    if not interactive and "intervention" in foot_switches:
+        del foot_switches["intervention"]
+
+    events = ControlEvents({
+        "exit_early": False,
+        "rerecord_episode": False,
+        "stop_recording": False,
+        "intervention": False
+    }, foot_switches=foot_switches)
 
     if is_headless():
         logging.warning(
@@ -160,7 +214,7 @@ def init_keyboard_listener(interactive: bool = False):
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
-            elif key == keyboard.Key.space:
+            elif key == keyboard.Key.space and interactive:
                 if events["intervention"]:
                     print("Space key pressed. The policy is back in charge in charge...")
                     events["intervention"] = False
@@ -241,7 +295,7 @@ def control_loop(
         robot.connect()
 
     if events is None:
-        events = {"exit_early": False}
+        events = ControlEvents({"exit_early": False})
 
     if control_time_s is None:
         control_time_s = float("inf")
@@ -262,8 +316,12 @@ def control_loop(
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
+        events.update()
 
         if teleoperate or events["intervention"]:
+            if policy is not None:
+                policy.reset()
+
             observation, action = teleop_step(robot)
         else:
             observation = robot.capture_observation()
@@ -369,6 +427,49 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
+
+
+class FootSwitchHandler:
+    def __init__(self, device_path="/dev/input/event18", event_name="episode_success", toggle: bool = False):
+        self.device = evdev.InputDevice(device_path)
+        self.keyboard_events = {event_name: False}
+        self.toggle = toggle
+        self.event_name = event_name
+        self.running = True
+
+    def start(self):
+        thread = threading.Thread(target=self._run, daemon=True)
+        thread.start()
+
+    def _run(self):
+        logging.info(f"Listening for foot switch events from {self.device.name} ({self.device.path})...")
+        for event in self.device.read_loop():
+            if not self.running:
+                break
+            if event.type == evdev.ecodes.EV_KEY:
+                key_event = evdev.categorize(event)
+                if key_event.keystate == 1:  # Key down
+                    if self.toggle:
+                        if self.keyboard_events[self.event_name]:
+                            logging.info(f"Foot switch pressed again - {self.event_name} toggled OFF")
+                            self.keyboard_events[self.event_name] = False
+                        else:
+                            logging.info(f"Foot switch pressed - {self.event_name} toggled ON")
+                            self.keyboard_events[self.event_name] = True
+                    else:
+                        logging.info(f"Foot switch pressed - {self.event_name} ON")
+                        self.keyboard_events[self.event_name]  = True
+                elif key_event.keystate == 0 and not self.toggle:  # Key release
+                    logging.info(f"Foot switch released - {self.event_name} OFF")
+                    self.keyboard_events[self.event_name] = False
+
+    def stop(self):
+        self.running = False
+
+    def reset(self):
+        self.keyboard_events = {self.event_name: False}
+
 
 def teleop_step(robot):
     for name in robot.follower_arms:

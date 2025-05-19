@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import draccus
@@ -82,13 +82,18 @@ class RecordControlConfig(ControlConfig):
     # Not enough threads might cause low camera fps.
     num_image_writer_threads_per_camera: int = 4
     # Display all cameras on screen
-    display_data: bool = False
+    display_data: bool = True
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
     # Peform DAgger like interventions to collect a new dataset
     interactive: bool = False
+    # Map from event name to foot switches (dict with "device": int and "toggle": bool)
+    foot_switches: dict[str, dict[str, bool]] | None = field(default_factory=lambda: {
+        "exit_early": {"device": 2, "toggle": False},
+        "intervention": {"device": 8, "toggle": True}
+    })
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.

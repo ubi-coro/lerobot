@@ -236,7 +236,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
         loss_dict = self.model.forward(batch)
-        return loss_dict["loss"], loss_dict
+        return loss_dict["loss"], {key: loss_dict[key] for key in loss_dict if key != "loss"}
 
 
 def block_causal_update_causal_mask(

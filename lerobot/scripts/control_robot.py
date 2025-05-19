@@ -277,7 +277,7 @@ def record(
     if not robot.is_connected:
         robot.connect()
 
-    listener, events = init_keyboard_listener(interactive=cfg.interactive)
+    listener, events = init_keyboard_listener(foot_switches=cfg.foot_switches, interactive=cfg.interactive)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -294,6 +294,8 @@ def record(
     while True:
         if recorded_episodes >= cfg.num_episodes:
             break
+
+        events.reset()
 
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_episode(
@@ -316,17 +318,19 @@ def record(
             (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
+            events.reset()
             reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
             dataset.clear_episode_buffer()
             continue
 
-        dataset.save_episode()
-        recorded_episodes += 1
+        if len(dataset) > 0:
+            dataset.save_episode()
+            recorded_episodes += 1
+        else:
+            log_say("Dataset is empty, re-record episode", cfg.play_sounds)
 
         if events["stop_recording"]:
             break
