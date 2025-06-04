@@ -107,7 +107,7 @@ def is_headless():
         return True
 
 
-def predict_action(observation, policy, device, use_amp, single_task=None):
+def predict_action(observation, policy, device, use_amp):
     observation = copy(observation)
     with (
         torch.inference_mode(),
@@ -115,17 +115,11 @@ def predict_action(observation, policy, device, use_amp, single_task=None):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
-            if isinstance(observation[name], str):
-                continue
-
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
-
-        if single_task is not None:
-            observation["task"] = [single_task]
 
         # Compute the next action with the policy
         # based on the current observation
@@ -214,13 +208,6 @@ def init_keyboard_listener(foot_switches: Optional[dict] = None, interactive: bo
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
-            elif key == keyboard.Key.space and interactive:
-                if events["intervention"]:
-                    print("Space key pressed. The policy is back in charge in charge...")
-                    events["intervention"] = False
-                else:
-                    print("Space key pressed. You are now in charge in charge...")
-                    events["intervention"] = True
             elif key == keyboard.Key.esc:
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
@@ -261,7 +248,6 @@ def record_episode(
     policy,
     fps,
     single_task,
-    interactive
 ):
     control_loop(
         robot=robot,
@@ -273,7 +259,6 @@ def record_episode(
         fps=fps,
         teleoperate=policy is None,
         single_task=single_task,
-        interactive=interactive
     )
 
 
@@ -314,6 +299,11 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+
+    # Controls starts, if policy is given it needs cleaning up
+    if policy is not None:
+        policy.reset()
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
         events.update()
@@ -325,7 +315,9 @@ def control_loop(
             observation, action = teleop_step(robot)
         else:
             observation = robot.capture_observation()
-
+            action = None
+            observation["task"] = [single_task]
+            observation["robot_type"] = [policy.robot_type] if hasattr(policy, "robot_type") else [""]
             if policy is not None:
                 pred_action = predict_action(
                     observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
@@ -346,9 +338,10 @@ def control_loop(
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
         if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
-            for k, v in action.items():
-                for i, vv in enumerate(v):
-                    rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
+            if action is not None:
+                for k, v in action.items():
+                    for i, vv in enumerate(v):
+                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:

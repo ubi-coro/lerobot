@@ -243,7 +243,7 @@ class ManipulatorRobot:
 
         if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
-        elif self.robot_type in ["so100", "moss", "lekiwi"]:
+        elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
@@ -261,7 +261,7 @@ class ManipulatorRobot:
             self.set_koch_robot_preset()
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
-        elif self.robot_type in ["so100", "moss", "lekiwi"]:
+        elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
             self.set_so100_robot_preset()
 
         # Enable torque on all motors of the follower arms
@@ -277,7 +277,6 @@ class ManipulatorRobot:
             # Set the leader arm in torque mode with the gripper motor set to an angle. This makes it possible
             # to squeeze the gripper and have it spring back to an open position on its own.
             for name in self.leader_arms:
-                self.leader_arms[name].write("Torque_Enable", 0)
                 self.leader_arms[name].write("Torque_Enable", 1, "gripper")
                 self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
 
@@ -320,7 +319,7 @@ class ManipulatorRobot:
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-                elif self.robot_type in ["so100", "moss", "lekiwi"]:
+                elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
                     from lerobot.common.robot_devices.motors.feetech import TorqueMode
 
@@ -399,20 +398,11 @@ class ManipulatorRobot:
                 elbow_idx = arm.read("ID", "elbow")
                 arm.write("Secondary_ID", elbow_idx, "elbow_shadow")
 
-        def set_drive_mode_(arm):
-            # set the drive mode to time-based profile to set moving time via velocity profiles
-            drive_mode = arm.read('Drive_Mode')
-            for i in range(len(arm.motor_names)):
-                drive_mode[i] |= 1 << 2  # set third bit to enable time-based profiles
-            arm.write('Drive_Mode', drive_mode)
-
         for name in self.follower_arms:
             set_shadow_(self.follower_arms[name])
-            set_drive_mode_(self.follower_arms[name])
 
         for name in self.leader_arms:
             set_shadow_(self.leader_arms[name])
-            set_drive_mode_(self.leader_arms[name])
 
         for name in self.follower_arms:
             # Set a velocity limit of 131 as advised by Trossen Robotics
@@ -437,13 +427,6 @@ class ManipulatorRobot:
 
             # Note: We can't enable torque on the leader gripper since "xc430-w150" doesn't have
             # a Current Controlled Position mode.
-
-        # set time profile after setting operation mode
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Profile_Velocity", int(self.config.moving_time * 1000))
-
-        for name in self.leader_arms:
-            self.leader_arms[name].write("Profile_Velocity", int(self.config.moving_time * 1000))
 
         if self.config.gripper_open_degree is not None:
             warnings.warn(
