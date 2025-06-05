@@ -18,13 +18,17 @@
 
 
 import logging
+import threading
 import time
 import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from typing import Optional
 import numpy as np
 
+import evdev
+import numpy as np
 import rerun as rr
 import torch
 from deepdiff import DeepDiff
@@ -126,20 +130,65 @@ def predict_action(observation, policy, device, use_amp):
         action = action.squeeze(0)
 
         # Move to cpu, if not already the case
-        action = action.to("cpu")
+        action = action.to("cpu", dtype=torch.float32)
 
     return action
 
 
-def init_keyboard_listener(interactive: bool = False):
+class ControlEvents:
+    def __init__(self, event_dict: dict, foot_switches: Optional[dict] = None):
+        self._event_dict = copy(event_dict)
+        self._foot_switch_threads = dict()
+
+        for event_name in foot_switches:
+            assert event_name in self._event_dict
+            fs_params = foot_switches[event_name]
+            self._foot_switch_threads[event_name] = FootSwitchHandler(
+                device_path=f'/dev/input/event{fs_params["device"]}',
+                toggle=bool(fs_params["toggle"]),
+                event_name=event_name
+            )
+            self._foot_switch_threads[event_name].start()
+
+    def __getitem__(self, key):
+        assert key in self._event_dict
+        return self._event_dict[key]
+
+    def __setitem__(self, key, value):
+        assert key in self._event_dict
+        self._event_dict[key] = value
+
+    def __len__(self):
+        len(self._event_dict)
+
+    def update(self):
+        for handler in self._foot_switch_threads.values():
+            self._event_dict.update(handler.keyboard_events)
+
+    def stop(self):
+        for handler in self._foot_switch_threads.values():
+            handler.stop()
+
+    def reset(self):
+        self._event_dict = dict.fromkeys(self._event_dict, False)
+        for handler in self._foot_switch_threads.values():
+            handler.reset()
+
+
+def init_keyboard_listener(foot_switches: Optional[dict] = None, interactive: bool = False):
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
-    events = {}
-    events["exit_early"] = False
-    events["rerecord_episode"] = False
-    events["stop_recording"] = False
-    events["intervention"] = False
+    foot_switches = dict() if foot_switches is None else foot_switches
+    if not interactive and "intervention" in foot_switches:
+        del foot_switches["intervention"]
+
+    events = ControlEvents({
+        "exit_early": False,
+        "rerecord_episode": False,
+        "stop_recording": False,
+        "intervention": False
+    }, foot_switches=foot_switches)
 
     if is_headless():
         logging.warning(
@@ -160,13 +209,6 @@ def init_keyboard_listener(interactive: bool = False):
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
-            elif key == keyboard.Key.space:
-                if events["intervention"]:
-                    print("Space key pressed. The policy is back in charge in charge...")
-                    events["intervention"] = False
-                else:
-                    print("Space key pressed. You are now in charge in charge...")
-                    events["intervention"] = True
             elif key == keyboard.Key.esc:
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
@@ -207,7 +249,6 @@ def record_episode(
     policy,
     fps,
     single_task,
-    interactive
 ):
     control_loop(
         robot=robot,
@@ -219,7 +260,6 @@ def record_episode(
         fps=fps,
         teleoperate=policy is None,
         single_task=single_task,
-        interactive=interactive
     )
 
 
@@ -241,7 +281,7 @@ def control_loop(
         robot.connect()
 
     if events is None:
-        events = {"exit_early": False}
+        events = ControlEvents({"exit_early": False})
 
     if control_time_s is None:
         control_time_s = float("inf")
@@ -260,14 +300,25 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+
+    # Controls starts, if policy is given it needs cleaning up
+    if policy is not None:
+        policy.reset()
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
+        events.update()
 
         if teleoperate or events["intervention"]:
+            if policy is not None:
+                policy.reset()
+
             observation, action = teleop_step(robot)
         else:
             observation = robot.capture_observation()
-
+            action = None
+            observation["task"] = [single_task]
+            observation["robot_type"] = [policy.robot_type] if hasattr(policy, "robot_type") else [""]
             if policy is not None:
                 pred_action = predict_action(
                     observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
@@ -288,9 +339,10 @@ def control_loop(
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
         if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
-            for k, v in action.items():
-                for i, vv in enumerate(v):
-                    rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
+            if action is not None:
+                for k, v in action.items():
+                    for i, vv in enumerate(v):
+                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
@@ -311,6 +363,8 @@ def control_loop(
 
 def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
+    busy_wait(1.0 / fps)
+
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
@@ -368,6 +422,49 @@ def sanity_check_dataset_robot_compatibility(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
 
+
+
+class FootSwitchHandler:
+    def __init__(self, device_path="/dev/input/event18", event_name="episode_success", toggle: bool = False):
+        self.device = evdev.InputDevice(device_path)
+        self.keyboard_events = {event_name: False}
+        self.toggle = toggle
+        self.event_name = event_name
+        self.running = True
+
+    def start(self):
+        thread = threading.Thread(target=self._run, daemon=True)
+        thread.start()
+
+    def _run(self):
+        logging.info(f"Listening for foot switch events from {self.device.name} ({self.device.path})...")
+        for event in self.device.read_loop():
+            if not self.running:
+                break
+            if event.type == evdev.ecodes.EV_KEY:
+                key_event = evdev.categorize(event)
+                if key_event.keystate == 1:  # Key down
+                    if self.toggle:
+                        if self.keyboard_events[self.event_name]:
+                            logging.info(f"Foot switch pressed again - {self.event_name} toggled OFF")
+                            self.keyboard_events[self.event_name] = False
+                        else:
+                            logging.info(f"Foot switch pressed - {self.event_name} toggled ON")
+                            self.keyboard_events[self.event_name] = True
+                    else:
+                        logging.info(f"Foot switch pressed - {self.event_name} ON")
+                        self.keyboard_events[self.event_name]  = True
+                elif key_event.keystate == 0 and not self.toggle:  # Key release
+                    logging.info(f"Foot switch released - {self.event_name} OFF")
+                    self.keyboard_events[self.event_name] = False
+
+    def stop(self):
+        self.running = False
+
+    def reset(self):
+        self.keyboard_events = {self.event_name: False}
+
+
 def teleop_step(robot):
     for name in robot.follower_arms:
         if (robot.leader_arms[name].read("Torque_Enable") != TorqueMode.DISABLED.value).any():
@@ -383,15 +480,6 @@ def reverse_teleop_step(robot):
 
         # Cap goal position when too far away from present position.
         # Slower fps expected due to reading from the follower.
-        #if robot.config.max_relative_target is not None:
-        #    present_pos = robot.leader_arms[name].read("Present_Position")
-        #    present_pos = torch.from_numpy(present_pos)
-        #    goal_pos = ensure_safe_goal_position(goal_pos, present_pos, robot.config.max_relative_target)
-
-
-        #goal_pos = goal_pos.numpy().astype(np.float32)
-
-        ###test
         if robot.config.max_relative_target is not None:
             present_pos = robot.leader_arms[name].read("Present_Position")
 
@@ -409,9 +497,9 @@ def reverse_teleop_step(robot):
             # Convert back to numpy for the write operation
             goal_pos = goal_pos_tensor.numpy()
 
-            # Ensure the right data type
+        # Ensure the right data type
         goal_pos = goal_pos.astype(np.float32)
-        ###test
 
         robot.leader_arms[name].write("Goal_Position", goal_pos)
+
 

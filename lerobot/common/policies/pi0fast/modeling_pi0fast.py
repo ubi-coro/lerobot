@@ -236,7 +236,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
         loss_dict = self.model.forward(batch)
-        return loss_dict["loss"], loss_dict
+        return loss_dict["loss"], {key: loss_dict[key] for key in loss_dict if key != "loss"}
 
 
 def block_causal_update_causal_mask(
@@ -516,7 +516,7 @@ class PI0FAST(nn.Module):
                         interpolate_like_pi=self.config.interpolate_like_pi,
                     )
 
-                # Normalize from range [0,1] to [-1,1] as expacted by siglip
+                # Normalize from range [0,1] to [-1,1] as expected by siglip
                 img = img * 2.0 - 1.0
 
                 bsize = img.shape[0]
