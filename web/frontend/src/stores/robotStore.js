@@ -4,20 +4,19 @@ import robotApi from '@/services/api/robotApi';
 
 export const useRobotStore = defineStore('robot', {
   state: () => ({
+    configs: [],
     status: {
       connected: false,
-      mode: null,
-      error: null,
-      cameras: [],
-      available_arms: []
+      available_arms: [],
+      cameras: []
     },
-    configs: [],
-    isLoading: false,
+    errorMessage: '',
+    hasError: false,
     socket: null,
-    cameraStreams: {}, // Map of camera ID to stream URL
+    cameraStreams: {},
     statusPollingTimer: null
   }),
-  
+
   getters: {
     isConnected: (state) => state.status.connected,
     isTeleoperating: (state) => state.status.mode === 'teleoperating',
@@ -25,229 +24,152 @@ export const useRobotStore = defineStore('robot', {
     errorMessage: (state) => state.status.error,
     availableCameras: (state) => state.status.cameras || []
   },
-  
+
   actions: {
     // Initialize socket connection
     initSocket() {
       if (!this.socket) {
         this.socket = io();
-        
+
         this.socket.on('connect', () => {
           console.log('Socket connected');
         });
-        
+
         this.socket.on('disconnect', () => {
           console.log('Socket disconnected');
         });
-        
+
         this.socket.on('camera_frame', (data) => {
-          console.log(`Received frame from camera ${data.camera_id}`);
-          if (data.camera_id && data.frame) {
-            this.cameraStreams[data.camera_id] = `data:image/jpeg;base64,${data.frame}`;
-          }
+          // Handle camera frame data
+          this.cameraStreams[data.camera_id] = data.frame;
         });
       }
     },
-    
-    // Cleanup socket connection
-    cleanupSocket() {
-      if (this.socket) {
-        this.socket.disconnect();
-        this.socket = null;
-      }
-    },
-    
+
     // Fetch robot configurations
-    async fetchConfigs() {
+    async fetchRobotConfigs() {
       try {
-        this.isLoading = true;
+        console.log('Fetching robot configurations from API...');
         const response = await robotApi.getConfigs();
-        
-        // Debug the response
-        console.log('Original configs response:', response);
-        
-        // Safely extract configs
-        if (response && response.data) {
-          if (Array.isArray(response.data)) {
-            this.configs = response.data;
-          } else if (response.data.data && Array.isArray(response.data.data)) {
-            this.configs = response.data.data;
-          } else {
-            console.error('Invalid configs format:', response.data);
-            this.configs = []; // Ensure it's always an array
-          }
+        console.log('API response:', response);
+
+        if (response.data && response.data.status === 'success' && response.data.data) {
+          this.configs = response.data.data;
+          console.log('Configs stored:', this.configs);
         } else {
-          this.configs = [];
+          console.error('Invalid response format:', response);
+          this.hasError = true;
+          this.errorMessage = 'Invalid API response format';
         }
-        
-        console.log('Processed configs:', this.configs);
       } catch (error) {
-        console.error('Error fetching configs:', error);
+        console.error('Error fetching robot configurations:', error);
         this.hasError = true;
-        this.errorMessage = 'Failed to fetch robot configurations';
-        this.configs = []; // Ensure it's always an array
-      } finally {
-        this.isLoading = false;
+        this.errorMessage = error.message || 'Failed to load robot configurations';
       }
     },
-    
+
     // Connect to robot
     async connectRobot(robotConfig, robotOverrides = null) {
       try {
-        this.isLoading = true;
+        this.hasError = false;
+        this.errorMessage = '';
+
         const response = await robotApi.connect(robotConfig, robotOverrides);
-        
+
         if (response.data.status === 'success') {
-          // Initialize socket for camera streaming
-          this.initSocket();
-          
-          // Start status polling
-          this.startStatusPolling();
-          
-          // Update local status based on response data
-          this.status.connected = true;
-          if (response.data.data) {
-            this.status.available_arms = response.data.data.available_arms || [];
-            this.status.cameras = response.data.data.cameras || [];
-          }
+          this.status = { ...this.status, ...response.data.data };
+          console.log('Robot connected successfully');
+        } else {
+          this.hasError = true;
+          this.errorMessage = response.data.message || 'Connection failed';
         }
-        
-        return response.data;
       } catch (error) {
         console.error('Error connecting to robot:', error);
-        this.status.error = error.response?.data?.message || error.message;
-        throw error;
-      } finally {
-        this.isLoading = false;
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Connection failed';
       }
     },
-    
-    // Disconnect from robot
+
+    // Disconnect robot
     async disconnectRobot() {
       try {
-        this.isLoading = true;
-        
-        // Stop camera streams
-        this.stopAllCameraStreams();
-        
         const response = await robotApi.disconnect();
-        
+
         if (response.data.status === 'success') {
-          // Stop polling and cleanup
-          this.stopStatusPolling();
-          this.cleanupSocket();
-          
-          // Reset state
-          this.status.connected = false;
-          this.status.mode = null;
-          this.cameraStreams = {};
+          this.status = {
+            connected: false,
+            available_arms: [],
+            cameras: [],
+            mode: null
+          };
+          console.log('Robot disconnected successfully');
         }
-        
-        return response.data;
       } catch (error) {
-        console.error('Error disconnecting from robot:', error);
-        this.status.error = error.response?.data?.message || error.message;
-        throw error;
-      } finally {
-        this.isLoading = false;
+        console.error('Error disconnecting robot:', error);
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Disconnect failed';
       }
     },
-    
+
     // Start teleoperation
-    async startTeleoperation(fps = null) {
+    async startTeleoperation(fps = 30) {
       try {
-        this.isLoading = true;
-        const response = await robotApi.startTeleoperation(fps);
-        
+        const response = await robotApi.startTeleoperation(fps, false);
+
         if (response.data.status === 'success') {
           this.status.mode = 'teleoperating';
-          
-          // Start streaming all available cameras
-          this.startAllCameraStreams();
+          console.log('Teleoperation started');
         }
-        
-        return response.data;
       } catch (error) {
         console.error('Error starting teleoperation:', error);
-        this.status.error = error.response?.data?.message || error.message;
-        throw error;
-      } finally {
-        this.isLoading = false;
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to start teleoperation';
       }
     },
-    
+
     // Stop teleoperation
     async stopTeleoperation() {
       try {
-        this.isLoading = true;
         const response = await robotApi.stopTeleoperation();
-        
+
         if (response.data.status === 'success') {
           this.status.mode = null;
+          console.log('Teleoperation stopped');
         }
-        
-        return response.data;
       } catch (error) {
         console.error('Error stopping teleoperation:', error);
-        this.status.error = error.response?.data?.message || error.message;
-        throw error;
-      } finally {
-        this.isLoading = false;
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
       }
     },
-    
-    // Start camera streams
-    startAllCameraStreams(fps = 10) {
-      if (!this.socket) return;
-      
-      this.availableCameras.forEach(camera => {
-        this.socket.emit('start_camera_stream', { 
-          camera_id: camera.id,
-          fps
-        });
-      });
-    },
-    
-    // Stop camera streams
-    stopAllCameraStreams() {
-      if (!this.socket) return;
-      
-      this.availableCameras.forEach(camera => {
-        this.socket.emit('stop_camera_stream', { 
-          camera_id: camera.id 
-        });
-      });
-    },
-    
-    // Send robot action
-    async sendAction(action) {
-      try {
-        await robotApi.sendAction(action);
-      } catch (error) {
-        console.error('Error sending action:', error);
-        this.status.error = error.response?.data?.message || error.message;
-      }
-    },
-    
-    // Fetch status
-    async fetchStatus() {
+
+    // Get robot status
+    async fetchRobotStatus() {
       try {
         const response = await robotApi.getStatus();
-        this.status = response.data;
+
+        if (response.data.status === 'success') {
+          this.status = { ...this.status, ...response.data.data };
+        }
       } catch (error) {
         console.error('Error fetching robot status:', error);
+        // Don't set error state for status polling failures
       }
     },
-    
+
     // Start status polling
     startStatusPolling(interval = 1000) {
-      this.stopStatusPolling();
-      
+      if (this.statusPollingTimer) {
+        clearInterval(this.statusPollingTimer);
+      }
+
       this.statusPollingTimer = setInterval(() => {
-        this.fetchStatus();
+        if (this.status.connected) {
+          this.fetchRobotStatus();
+        }
       }, interval);
     },
-    
+
     // Stop status polling
     stopStatusPolling() {
       if (this.statusPollingTimer) {
@@ -257,15 +179,3 @@ export const useRobotStore = defineStore('robot', {
     }
   }
 });
-
-// In robotStore.js
-const fetchRobotStatus = async () => {
-  try {
-    const response = await robotApi.getStatus();
-    // Make sure you're extracting the data field from the response
-    state.status = response.data.data; 
-    console.log("Updated robot status:", state.status);
-  } catch (error) {
-    console.error('Error fetching robot status:', error);
-  }
-};

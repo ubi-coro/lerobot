@@ -269,6 +269,7 @@ def record_episode(
         fps=fps,
         teleoperate=policy is None,
         single_task=single_task,
+        interactive=interactive
     )
 
 
@@ -479,6 +480,22 @@ def teleop_step(robot):
         if (robot.leader_arms[name].read("Torque_Enable") != TorqueMode.DISABLED.value).any():
             robot.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
     return robot.teleop_step(record_data=True)
+    # for name in robot.follower_arms:
+    #     try:
+    #         logging.info(f"Accessing leader arm '{name}' on port {robot.leader_arms[name].port_handler.getPortName()}")
+    #         if (robot.leader_arms[name].read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+    #             robot.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+    #     except Exception as e:
+    #         logging.error(f"Error in teleop_step with leader arm '{name}' on port "
+    #                      f"{getattr(robot.leader_arms[name].port_handler, '_port_name', 'unknown')}: {e}")
+
+    # try:
+    #     return robot.teleop_step(record_data=True)
+    # except Exception as e:
+    #     logging.error(f"Error in robot.teleop_step: {e}")
+    #     # Provide a fallback return value
+    #     empty_observation = robot.capture_observation()
+    #     return empty_observation, {"action": None}
 
 def reverse_teleop_step(robot):
     for name in robot.follower_arms:

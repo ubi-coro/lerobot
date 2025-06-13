@@ -42,6 +42,16 @@ class TeleoperateControlConfig(ControlConfig):
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    enable_safe_shutdown: bool = False
+
+@ControlConfig.register_subclass("safe_position")
+@dataclass
+class SafePositionControlConfig(ControlConfig):
+    """Configuration for moving robot to safe position."""
+    arms: list[str] | None = None  # Which arms to move, None for all
+    timeout_s: float = 10.0       # Maximum time to wait for movement
+    speed_factor: float = 0.3     # Movement speed (0.1-1.0)
+    display_data: bool = False    # Whether to display data during movement
 
 
 @ControlConfig.register_subclass("record")
@@ -91,6 +101,8 @@ class RecordControlConfig(ControlConfig):
     interactive: bool = False
     # Map from event name to foot switches (dict with "device": int and "toggle": bool)
     foot_switches: dict[str, dict[str, bool]] | None = field(default_factory=lambda: {})
+    # Save a policy rollout or not
+    save_eval: bool = True
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.

@@ -99,7 +99,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     # Also, everything is expected to work safely out-of-the-box, but we highly advise to
     # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
-    max_relative_target: int | None = 5
+    max_relative_target: int | None = 25
 
     # The duration of the velocity-based time profile
     # Higher values lead to smoother motions, but increase lag.
@@ -181,6 +181,8 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     # Troubleshooting: If one of your IntelRealSense cameras freeze during
     # data recording due to bandwidth limit, you might need to plug the camera
     # on another USB hub or PCIe card.
+    # IntelRealSenseCameraConfig
+    # serial_number
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "cam_high": IntelRealSenseCameraConfig(
@@ -206,7 +208,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
                 fps=30,
                 width=640,
                 height=480,
-            ),
+            )
         }
     )
 

@@ -152,6 +152,7 @@ from lerobot.common.robot_devices.control_configs import (
     RecordControlConfig,
     RemoteRobotConfig,
     ReplayControlConfig,
+    #SafePositionControlConfig,
     TeleoperateControlConfig,
 )
 from lerobot.common.robot_devices.control_utils import (
@@ -171,10 +172,49 @@ from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
 from lerobot.configs import parser
 
+# from lerobot.common.robot_devices.safe_control import safe_robot_context
+
 ########################################################################################
 # Control modes
 ########################################################################################
 
+def diagnose_dynamixel_ports(robot):
+    """Print diagnostic information about all Dynamixel ports."""
+    logging.info("===== DYNAMIXEL PORT DIAGNOSTICS =====")
+
+    # Check leader arms
+    for name, arm in robot.leader_arms.items():
+        port_name = getattr(arm.port_handler, '_port_name', 'unknown')
+        port_open = getattr(arm.port_handler, 'is_open', False)
+        baudrate = getattr(arm.port_handler, '_baudrate', 'unknown')
+
+        logging.info(f"Leader arm '{name}': Port={port_name}, Open={port_open}, Baudrate={baudrate}")
+
+        # Try reading a basic register
+        try:
+            protocol = arm.packet_handler.getProtocolVersion()
+            model = arm.read("Model_Number")
+            logging.info(f"  Protocol={protocol}, Model={model}")
+        except Exception as e:
+            logging.error(f"  Error reading from leader arm '{name}': {e}")
+
+    # Check follower arms
+    for name, arm in robot.follower_arms.items():
+        port_name = getattr(arm.port_handler, '_port_name', 'unknown')
+        port_open = getattr(arm.port_handler, 'is_open', False)
+        baudrate = getattr(arm.port_handler, '_baudrate', 'unknown')
+
+        logging.info(f"Follower arm '{name}': Port={port_name}, Open={port_open}, Baudrate={baudrate}")
+
+        # Try reading a basic register
+        try:
+            protocol = arm.packet_handler.getProtocolVersion()
+            model = arm.read("Model_Number")
+            logging.info(f"  Protocol={protocol}, Model={model}")
+        except Exception as e:
+            logging.error(f"  Error reading from follower arm '{name}': {e}")
+
+    logging.info("======================================")
 
 @safe_disconnect
 def calibrate(robot: Robot, cfg: CalibrateControlConfig):
@@ -232,6 +272,8 @@ def calibrate(robot: Robot, cfg: CalibrateControlConfig):
 
 @safe_disconnect
 def teleoperate(robot: Robot, cfg: TeleoperateControlConfig):
+    #diagnose_dynamixel_ports(robot)
+
     control_loop(
         robot,
         control_time_s=cfg.teleop_time_s,
@@ -239,6 +281,30 @@ def teleoperate(robot: Robot, cfg: TeleoperateControlConfig):
         teleoperate=True,
         display_data=cfg.display_data,
     )
+
+# @safe_disconnect
+# def safe_position(robot: Robot, cfg: SafePositionControlConfig):
+#     """Move robot to safe position"""
+#     from lerobot.common.robot_devices.robots.safe_positions import add_safe_position_support
+
+#     if not robot.is_connected:
+#         robot.connect()
+
+#     add_safe_position_support(robot)
+
+#     print("Moving robot to safe position...")
+#     success = robot.move_to_safe_position(
+#         arm_names=cfg.arms,
+#         timeout_s=cfg.timeout_s,
+#         speed_factor=cfg.speed_factor
+#     )
+
+#     if success:
+#         print("Robot successfully moved to safe position!")
+#     else:
+#         print("Failed to move robot to safe position.")
+
+#     return success
 
 
 @safe_disconnect
@@ -331,7 +397,8 @@ def record(
             continue
 
         if len(dataset) > 0:
-            dataset.save_episode()
+            if cfg.save_eval:
+                dataset.save_episode()
             recorded_episodes += 1
         else:
             log_say("Dataset is empty, re-record episode", cfg.play_sounds)
@@ -420,21 +487,49 @@ def control_robot(cfg: ControlPipelineConfig):
 
     # TODO(Steven): Blueprint for fixed window size
 
-    if isinstance(cfg.control, CalibrateControlConfig):
-        calibrate(robot, cfg.control)
-    elif isinstance(cfg.control, TeleoperateControlConfig):
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_teleop")
-        teleoperate(robot, cfg.control)
-    elif isinstance(cfg.control, RecordControlConfig):
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
-        record(robot, cfg.control)
-    elif isinstance(cfg.control, ReplayControlConfig):
-        replay(robot, cfg.control)
-    elif isinstance(cfg.control, RemoteRobotConfig):
-        from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
+    # if isinstance(cfg.control, CalibrateControlConfig):
+    #     calibrate(robot, cfg.control)
+    # elif isinstance(cfg.control, TeleoperateControlConfig):
+    #     _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_teleop")
+    #     teleoperate(robot, cfg.control)
+    # elif isinstance(cfg.control, RecordControlConfig):
+    #     _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
+    #     record(robot, cfg.control)
+    # elif isinstance(cfg.control, ReplayControlConfig):
+    #     replay(robot, cfg.control)
+    # # elif isinstance(cfg.control, SafePositionControlConfig):
+    # #     safe_position(robot, cfg.control)
+    # elif isinstance(cfg.control, RemoteRobotConfig):
+    #     from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
 
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
-        run_lekiwi(cfg.robot)
+    #     _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
+    #     run_lekiwi(cfg.robot)
+
+    # safe disconnect the robot at the end of the control loop
+    try:
+        if isinstance(cfg.control, CalibrateControlConfig):
+            calibrate(robot, cfg.control)
+        elif isinstance(cfg.control, TeleoperateControlConfig):
+            _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_teleop")
+            teleoperate(robot, cfg.control)
+        elif isinstance(cfg.control, RecordControlConfig):
+            _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
+            record(robot, cfg.control)
+        elif isinstance(cfg.control, ReplayControlConfig):
+            replay(robot, cfg.control)
+        elif isinstance(cfg.control, RemoteRobotConfig):
+            from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
+
+            _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
+            run_lekiwi(cfg.robot)
+    except KeyboardInterrupt:
+        pass
+    except ValueError as e:
+        print(f"Required configuration values not provided: {e}")
+        pass
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        pass
 
     if robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process
