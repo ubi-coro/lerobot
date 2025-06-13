@@ -90,10 +90,7 @@ class RecordControlConfig(ControlConfig):
     # Peform DAgger like interventions to collect a new dataset
     interactive: bool = False
     # Map from event name to foot switches (dict with "device": int and "toggle": bool)
-    foot_switches: dict[str, dict[str, bool]] | None = field(default_factory=lambda: {
-        "exit_early": {"device": 2, "toggle": False},
-        "intervention": {"device": 8, "toggle": True}
-    })
+    foot_switches: dict[str, dict[str, bool]] | None = field(default_factory=lambda: {})
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.

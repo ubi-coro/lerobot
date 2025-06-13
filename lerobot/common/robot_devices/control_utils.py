@@ -140,6 +140,7 @@ class ControlEvents:
         self._event_dict = copy(event_dict)
         self._foot_switch_threads = dict()
 
+        foot_switches = {}
         for event_name in foot_switches:
             assert event_name in self._event_dict
             fs_params = foot_switches[event_name]
@@ -209,6 +210,13 @@ def init_keyboard_listener(foot_switches: Optional[dict] = None, interactive: bo
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
+            elif key == keyboard.Key.space and interactive:
+                if events["intervention"]:
+                    print("Space key pressed. The policy is back in charge in charge...")
+                    events["intervention"] = False
+                else:
+                    print("Space key pressed. You are now in charge in charge...")
+                    events["intervention"] = True
             elif key == keyboard.Key.esc:
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
@@ -249,6 +257,7 @@ def record_episode(
     policy,
     fps,
     single_task,
+    interactive
 ):
     control_loop(
         robot=robot,
