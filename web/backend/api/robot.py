@@ -28,6 +28,9 @@ def connect_aloha():
     """Connect to ALOHA robot"""
     data = request.json or {}
     operation_mode = data.get('operation_mode', 'bimanual')
+    config_settings = data.get('config_settings', {})
+    
+    logger.info(f"Connect request - Operation mode: {operation_mode}, Config: {config_settings}")
     
     try:
         # Prepare overrides based on operation mode
@@ -38,6 +41,15 @@ def connect_aloha():
             overrides = ['~leader_arms.right', '~follower_arms.right']
         elif operation_mode == 'bimanual':
             overrides = []  # No exclusions for bimanual
+        
+        # Add camera configuration override if cameras are disabled
+        if not config_settings.get('enableCameras', True):
+            overrides.append('robot.cameras={}')
+            logger.info("Cameras disabled - adding robot.cameras={} override")
+        else:
+            logger.info("Cameras enabled - keeping default camera configuration")
+        
+        logger.info(f"Final overrides list: {overrides}")
         
         result = robot_service.connect_aloha(overrides)
         return jsonify({"status": "success", "data": result})

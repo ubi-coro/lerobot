@@ -6,88 +6,6 @@
         <TeleoperationConfig @configurationApplied="onConfigurationApplied" />
       </div>
       
-      <!-- Teleoperation Control -->
-      <div class="col-md-6">
-        <div class="card">
-          <div class="card-header d-flex justify-content-between align-items-center">
-            <h5 class="mb-0">Teleoperation Control</h5>
-            <span 
-              class="badge" 
-              :class="isTeleoperating ? 'bg-success' : 'bg-secondary'"
-            >
-              {{ isTeleoperating ? 'Active' : 'Inactive' }}
-            </span>
-          </div>
-          
-          <div class="card-body">
-            <div v-if="!isConnected" class="alert alert-warning">
-              Please connect to a robot first.
-            </div>
-            
-            <div v-else>
-              <!-- Quick Start -->
-              <div v-if="!isTeleoperating" class="mb-3">
-                <div class="d-grid gap-2">
-                  <button 
-                    type="button" 
-                    class="btn btn-success" 
-                    @click="startTeleoperation" 
-                    :disabled="isLoading"
-                  >
-                    <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
-                    <i v-else class="bi bi-play-fill me-2"></i>
-                    Start Teleoperation
-                  </button>
-                  
-                  <button 
-                    type="button" 
-                    class="btn btn-outline-primary" 
-                    @click="moveToSafePosition" 
-                    :disabled="isLoading"
-                  >
-                    <i class="bi bi-shield-check me-2"></i>
-                    Move to Safe Position
-                  </button>
-                </div>
-              </div>
-              
-              <!-- Active Teleoperation Controls -->
-              <div v-else>
-                <div class="alert alert-info mb-3">
-                  <i class="bi bi-robot me-2"></i>
-                  Teleoperation is active. Robot is ready for control.
-                  <div class="mt-2 small">
-                    <strong>Hotkeys:</strong> 
-                    <span v-if="currentConfig.enableSafeShutdown">Space = Emergency Stop</span>
-                  </div>
-                </div>
-                
-                <div class="d-grid gap-2">
-                  <button 
-                    type="button" 
-                    class="btn btn-warning" 
-                    @click="stopTeleoperation" 
-                    :disabled="isLoading"
-                  >
-                    <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
-                    <i v-else class="bi bi-stop-fill me-2"></i>
-                    Stop Teleoperation
-                  </button>
-                  
-                  <button 
-                    type="button" 
-                    class="btn btn-danger" 
-                    @click="emergencyStop"
-                  >
-                    <i class="bi bi-exclamation-triangle me-2"></i>
-                    Emergency Stop
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
       
       <!-- Performance Monitoring -->
       <div class="col-md-6" v-if="currentConfig.performanceMonitoring && isTeleoperating">
@@ -127,43 +45,6 @@
             <div class="mt-3">
               <div class="bg-light p-3 text-center" style="height: 120px; border-radius: 4px;">
                 <small class="text-muted">Performance graph will be displayed here</small>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Status Information -->
-      <div class="col-12" v-if="isConnected">
-        <div class="card">
-          <div class="card-header">
-            <h5 class="mb-0">Robot Status</h5>
-          </div>
-          <div class="card-body">
-            <div class="row g-3">
-              <div class="col-md-3">
-                <div class="text-center">
-                  <div class="h4 mb-1">{{ robotStore.status.available_arms.length }}</div>
-                  <div class="text-muted small">Available Arms</div>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <div class="text-center">
-                  <div class="h4 mb-1">{{ robotStore.availableCameras.length }}</div>
-                  <div class="text-muted small">Active Cameras</div>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <div class="text-center">
-                  <div class="h4 mb-1">{{ currentConfig.operationMode }}</div>
-                  <div class="text-muted small">Operation Mode</div>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <div class="text-center">
-                  <div class="h4 mb-1">{{ getEffectiveFps() }}</div>
-                  <div class="text-muted small">Target FPS</div>
-                </div>
               </div>
             </div>
           </div>

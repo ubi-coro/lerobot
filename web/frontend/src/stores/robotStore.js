@@ -99,6 +99,9 @@ export const useRobotStore = defineStore('robot', {
         if (response.data.status === 'success') {
           this.status = { ...this.status, ...response.data.data };
           console.log('Robot connected successfully');
+          
+          // Start status polling to get real-time updates including errors
+          this.startStatusPolling(2000); // Poll every 2 seconds
         } else {
           this.hasError = true;
           this.errorMessage = response.data.message || 'Connection failed';

@@ -13,16 +13,11 @@
       </div>
 
       <div class="mb-3">
-        <label for="fps" class="form-label">FPS</label>
-        <input
-          type="number"
-          id="fps"
-          v-model="fps"
-          class="form-control"
-          min="1"
-          max="60"
-          :disabled="isLoading"
-        >
+        <label for="configuration" class="form-label">Configuration</label>
+        <select id="configuration" v-model="configuration" class="form-select" :disabled="isLoading">
+          <option value="demo_default_no_cameras">Demo Default without Cameras</option>
+          <option value="demo_default_with_cameras">Demo Default with Cameras</option>
+        </select>
       </div>
 
       <button
@@ -36,48 +31,21 @@
 
     <div v-else class="robot-controls">
       <h3>ALOHA Robot Connected</h3>
-
-      <!-- Add camera display toggle -->
-      <div class="mb-3">
-        <div class="form-check">
-          <input
-            class="form-check-input"
-            type="checkbox"
-            id="showCameras"
-            v-model="showCameras"
-          >
-          <label class="form-check-label" for="showCameras">
-            Show Camera Windows During Teleoperation
-          </label>
-        </div>
+      
+      <div class="alert alert-success mb-3">
+        <i class="bi bi-check-circle me-2"></i>
+        Robot successfully connected and ready for teleoperation.
       </div>
 
-      <p>Operation Mode: {{ operationMode }}</p>
-      <p>Available Arms: {{ robotStore.status.available_arms?.join(', ') }}</p>
-      <p>Cameras: {{ robotStore.status.cameras?.length || 0 }}</p>
-
-      <div class="control-buttons">
-        <button
-          @click="startTeleoperation"
-          class="btn btn-success me-2"
-          :disabled="isTeleoperating"
-        >
-          {{ isTeleoperating ? 'Teleoperating...' : 'Start Teleoperation' }}
-        </button>
-
-        <button
-          @click="stopTeleoperation"
-          class="btn btn-warning me-2"
-          :disabled="!isTeleoperating"
-        >
-          Stop Teleoperation
-        </button>
-
+      <div class="d-grid">
         <button
           @click="disconnectRobot"
           class="btn btn-danger"
+          :disabled="isLoading"
         >
-          Disconnect
+          <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
+          <i v-else class="bi bi-plug me-2"></i>
+          Disconnect Robot
         </button>
       </div>
     </div>
@@ -93,15 +61,22 @@ import robotApi from '@/services/api/robotApi';
 const robotStore = useRobotStore();
 
 const operationMode = ref('bimanual');
-const fps = ref(30);
+const configuration = ref('demo_default_no_cameras');
 const isLoading = ref(false);
 const errorMessage = ref('');
-const showCameras = ref(true);
 
 // Use computed properties to get reactive state from the store
 const isConnected = computed(() => robotStore.isConnected);
-const isTeleoperating = computed(() => robotStore.isTeleoperating);
 const robotStatus = computed(() => robotStore.status);
+
+// Helper function to get configuration settings
+const getConfigurationSettings = (configName) => {
+  const configs = {
+    'demo_default_no_cameras': { fps: 30, enableCameras: false },
+    'demo_default_with_cameras': { fps: 30, enableCameras: true },
+  };
+  return configs[configName] || configs['demo_default_no_cameras'];
+};
 
 const connectAloha = async () => {
   console.log('Attempting to connect ALOHA robot...');
@@ -109,14 +84,20 @@ const connectAloha = async () => {
   errorMessage.value = '';
 
   try {
-    const response = await robotApi.connect(operationMode.value);
+    const configSettings = getConfigurationSettings(configuration.value);
+    const response = await robotApi.connect(operationMode.value, configSettings);
     console.log('Connect response:', response);
 
     if (response.data.status === 'success') {
       // Update the store with the connection status
       robotStore.status.connected = true;
       robotStore.status = { ...robotStore.status, ...response.data.data };
+      
+      // Store the camera configuration setting
+      robotStore.teleoperationConfig.showCameras = configSettings.enableCameras;
+      
       console.log('ALOHA robot connected:', response.data.data);
+      console.log('Camera configuration:', configSettings.enableCameras);
     } else {
       errorMessage.value = response.data.message || 'Connection failed';
       console.error('Connection failed:', response.data);
@@ -129,47 +110,14 @@ const connectAloha = async () => {
   }
 };
 
-const startTeleoperation = async () => {
-  console.log('Attempting to start teleoperation...');
-  try {
-    const response = await robotApi.startTeleoperation(fps.value, showCameras.value);
-    console.log('Teleoperation response:', response);
-
-    if (response.data.status === 'success') {
-      robotStore.status.mode = 'teleoperating';
-      console.log('Teleoperation started');
-    } else {
-      errorMessage.value = response.data.message || 'Failed to start teleoperation';
-    }
-  } catch (error) {
-    console.error('Error starting teleoperation:', error);
-    errorMessage.value = error.response?.data?.message || 'Failed to start teleoperation';
-  }
-};
-
-const stopTeleoperation = async () => {
-  console.log('Attempting to stop teleoperation...');
-  try {
-    const response = await robotApi.stopTeleoperation();
-    console.log('Stop teleoperation response:', response);
-
-    if (response.data.status === 'success') {
-      robotStore.status.mode = null;
-      console.log('Teleoperation stopped');
-    } else {
-      errorMessage.value = response.data.message || 'Failed to stop teleoperation';
-    }
-  } catch (error) {
-    console.error('Error stopping teleoperation:', error);
-    errorMessage.value = error.response?.data?.message || 'Failed to stop teleoperation';
-  }
-};
-
 const disconnectRobot = async () => {
   console.log('Attempting to disconnect robot...');
+  isLoading.value = true;
+  
   try {
+    // Stop teleoperation if it's running before disconnecting
     if (robotStore.isTeleoperating) {
-      await stopTeleoperation();
+      await robotStore.stopTeleoperation();
     }
 
     const response = await robotApi.disconnect();
@@ -180,11 +128,19 @@ const disconnectRobot = async () => {
       robotStore.status.mode = null;
       robotStore.status.available_arms = [];
       robotStore.status.cameras = [];
+      
+      // Reset camera configuration
+      robotStore.teleoperationConfig.showCameras = false;
+      
       console.log('Robot disconnected');
+    } else {
+      errorMessage.value = response.data.message || 'Failed to disconnect';
     }
   } catch (error) {
     console.error('Error disconnecting robot:', error);
     errorMessage.value = error.response?.data?.message || 'Failed to disconnect';
+  } finally {
+    isLoading.value = false;
   }
 };
 

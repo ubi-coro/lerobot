@@ -25,6 +25,32 @@
       <li class="nav-item" role="presentation">
         <button 
           class="nav-link" 
+          id="enhanced-tab" 
+          data-bs-toggle="tab" 
+          data-bs-target="#enhanced-teleoperation" 
+          type="button" 
+          role="tab"
+        >
+          <i class="bi bi-gear me-2"></i>
+          Enhanced Teleoperation
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button 
+          class="nav-link" 
+          id="safety-tab" 
+          data-bs-toggle="tab" 
+          data-bs-target="#safety-controls" 
+          type="button" 
+          role="tab"
+        >
+          <i class="bi bi-shield-check me-2"></i>
+          Safety Controls
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button 
+          class="nav-link" 
           id="docs-tab" 
           data-bs-toggle="tab" 
           data-bs-target="#documentation" 
@@ -52,37 +78,204 @@
               </h2>
               <RobotConnection />
             </div>
-            
-            <!-- Safe Position Control -->
-            <div class="mb-4">
-              <h2 class="h5 mb-3">
-                <i class="bi bi-shield-check me-2"></i>
-                Safe Position Control
-              </h2>
-              <SafePositionControl />
-            </div>
           </div>
           
-          <!-- Center area for enhanced teleoperation -->
+          <!-- Center area for robot status and teleoperation -->
           <div class="col-lg-8">
-            <div class="mb-4">
+            <!-- Robot Status -->
+            <div class="mb-4" v-if="isConnected">
               <h2 class="h5 mb-3">
-                <i class="bi bi-robot me-2"></i>
-                Enhanced Teleoperation
+                <i class="bi bi-info-circle me-2"></i>
+                Robot Status
               </h2>
-              <EnhancedTeleoperationPanel />
+              <div class="card">
+                <div class="card-body">
+                  <div class="row g-3">
+                    <div class="col-md-3">
+                      <div class="text-center">
+                        <div class="h4 mb-1">{{ robotStore.status.available_arms?.length || 0 }}</div>
+                        <div class="text-muted small">Available Arms</div>
+                      </div>
+                    </div>
+                    <div class="col-md-3">
+                      <div class="text-center">
+                        <div class="h4 mb-1">{{ robotStore.availableCameras?.length || 0 }}</div>
+                        <div class="text-muted small">Active Cameras</div>
+                      </div>
+                    </div>
+                    <div class="col-md-3">
+                      <div class="text-center">
+                        <div class="h4 mb-1">{{ robotStore.status.mode || 'Idle' }}</div>
+                        <div class="text-muted small">Current Mode</div>
+                      </div>
+                    </div>
+                    <div class="col-md-3">
+                      <div class="text-center">
+                        <div class="h4 mb-1">
+                          <span class="badge" :class="isConnected ? 'bg-success' : 'bg-secondary'">
+                            {{ isConnected ? 'Connected' : 'Disconnected' }}
+                          </span>
+                        </div>
+                        <div class="text-muted small">Connection Status</div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- Error Information Display -->
+                  <div v-if="robotStore.hasError" class="mt-3">
+                    <div class="alert alert-danger mb-0">
+                      <div class="d-flex align-items-start">
+                        <i class="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
+                        <div class="flex-grow-1">
+                          <div class="fw-bold">System Error Detected</div>
+                          <div class="small mt-1">{{ robotStore.errorMessage }}</div>
+                          <div class="small text-muted mt-2">
+                            <i class="bi bi-clock me-1"></i>
+                            Check terminal/logs for detailed technical information
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- Additional Status Information -->
+                  <div v-if="robotStore.status.mode === 'teleoperating'" class="mt-3">
+                    <div class="alert alert-info mb-0">
+                      <div class="d-flex align-items-center">
+                        <i class="bi bi-activity me-2"></i>
+                        <div class="flex-grow-1">
+                          <div class="fw-bold">Teleoperation Active</div>
+                          <div class="small">Robot is responding to leader arm movements</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Teleoperation Control -->
+            <div class="mb-4" v-if="isConnected">
+              <h2 class="h5 mb-3">
+                <i class="bi bi-joystick me-2"></i>
+                Teleoperation Control
+              </h2>
+              <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                  <span class="fw-bold">Control Panel</span>
+                  <span class="badge" :class="isTeleoperating ? 'bg-success' : 'bg-secondary'">
+                    {{ isTeleoperating ? 'Active' : 'Inactive' }}
+                  </span>
+                </div>
+                <div class="card-body">
+                  <!-- Control Buttons -->
+                  <div class="d-grid gap-2">
+                    <button 
+                      v-if="!isTeleoperating"
+                      type="button" 
+                      class="btn btn-success" 
+                      @click="startTeleoperation" 
+                      :disabled="robotStore.isLoading"
+                    >
+                      <span v-if="robotStore.isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                      <i v-else class="bi bi-play-fill me-2"></i>
+                      Start Teleoperation
+                    </button>
+                    
+                    <button 
+                      v-if="isTeleoperating"
+                      type="button" 
+                      class="btn btn-warning" 
+                      @click="stopTeleoperation" 
+                      :disabled="robotStore.isLoading"
+                    >
+                      <span v-if="robotStore.isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                      <i v-else class="bi bi-stop-fill me-2"></i>
+                      Stop Teleoperation
+                    </button>
+                    
+                    <button 
+                      type="button" 
+                      class="btn btn-outline-primary" 
+                      @click="moveToSafePosition" 
+                      :disabled="robotStore.isLoading"
+                    >
+                      <i class="bi bi-shield-check me-2"></i>
+                      Move to Safe Position
+                    </button>
+                    
+                    <button 
+                      type="button" 
+                      class="btn btn-danger" 
+                      @click="emergencyStop" 
+                      :disabled="robotStore.isLoading"
+                    >
+                      <i class="bi bi-octagon-fill me-2"></i>
+                      Emergency Stop
+                    </button>
+                  </div>
+                  
+                </div>
+              </div>
             </div>
           </div>
         </div>
         
         <!-- Camera feeds section -->
-        <div class="row mt-4">
+        <div class="row mt-4" v-if="hasCameras">
           <div class="col-12">
             <h2 class="h5 mb-3">
               <i class="bi bi-camera-video me-2"></i>
               Camera Feeds
             </h2>
             <CameraViewer />
+          </div>
+        </div>
+        
+        <!-- No Cameras Info -->
+        <div class="row mt-4" v-if="isConnected && !hasCameras">
+          <div class="col-12">
+            <div class="alert alert-info">
+              <i class="bi bi-info-circle me-2"></i>
+              <strong>No Cameras Active</strong> - Current configuration does not include camera feeds. 
+              To enable cameras, disconnect and reconnect with a camera-enabled configuration.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Enhanced Teleoperation Tab -->
+      <div class="tab-pane fade" id="enhanced-teleoperation" role="tabpanel">
+        <div class="row">
+          <div class="col-12">
+            <div class="mb-4">
+              <h2 class="h4 mb-3">
+                <i class="bi bi-gear me-2"></i>
+                Advanced Teleoperation Configuration
+              </h2>
+              <p class="text-muted mb-4">
+                Configure advanced teleoperation settings, monitoring, and specialized features for precise robot control.
+              </p>
+              <EnhancedTeleoperationPanel />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Safety Controls Tab -->
+      <div class="tab-pane fade" id="safety-controls" role="tabpanel">
+        <div class="row">
+          <div class="col-12">
+            <div class="mb-4">
+              <h2 class="h4 mb-3">
+                <i class="bi bi-shield-check me-2"></i>
+                Robot Safety Controls
+              </h2>
+              <p class="text-muted mb-4">
+                Manage robot safety positions, emergency procedures, and protective control settings.
+              </p>
+              <SafePositionControl />
+            </div>
           </div>
         </div>
       </div>
@@ -96,11 +289,58 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
+import { useRobotStore } from '@/stores/robotStore';
 import RobotConnection from '@/components/robot/RobotConnection.vue';
 import EnhancedTeleoperationPanel from '@/components/robot/EnhancedTeleoperationPanel.vue';
 import SafePositionControl from '@/components/robot/SafePositionControl.vue';
 import CameraViewer from '@/components/robot/CameraViewer.vue';
 import TeleoperationDocs from '@/components/robot/TeleoperationDocs.vue';
+
+// Initialize the robot store
+const robotStore = useRobotStore();
+
+// Computed properties
+const isConnected = computed(() => robotStore.isConnected);
+const isTeleoperating = computed(() => robotStore.isTeleoperating);
+const hasCameras = computed(() => {
+  // Only show cameras if connected AND cameras are enabled in the configuration
+  return robotStore.isConnected && 
+         robotStore.teleoperationConfig?.showCameras === true;
+});
+
+// Methods for teleoperation control
+const startTeleoperation = async () => {
+  try {
+    await robotStore.startTeleoperation(30); // Default 30 FPS
+  } catch (error) {
+    console.error('Error starting teleoperation:', error);
+  }
+};
+
+const stopTeleoperation = async () => {
+  try {
+    await robotStore.stopTeleoperation();
+  } catch (error) {
+    console.error('Error stopping teleoperation:', error);
+  }
+};
+
+const moveToSafePosition = async () => {
+  try {
+    await robotStore.moveToSafePosition();
+  } catch (error) {
+    console.error('Error moving to safe position:', error);
+  }
+};
+
+const emergencyStop = async () => {
+  try {
+    await robotStore.emergencyStop();
+  } catch (error) {
+    console.error('Error during emergency stop:', error);
+  }
+};
 </script>
 
 <style scoped>

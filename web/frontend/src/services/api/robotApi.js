@@ -64,11 +64,15 @@ export default {
   },
 
   // Connect to robot
-  connect(operationMode = 'bimanual') {
+  connect(operationMode = 'bimanual', configSettings = {}) {
     console.log('Calling connect with operation mode:', operationMode);
+    console.log('Calling connect with config settings:', configSettings);
     return apiCall('/connect', {
       method: 'POST',
-      body: { operation_mode: operationMode }
+      body: { 
+        operation_mode: operationMode,
+        config_settings: configSettings 
+      }
     });
   },
 

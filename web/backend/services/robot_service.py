@@ -53,6 +53,7 @@ class RobotService:
 
             # Apply any overrides for operation modes (left_only, right_only, etc.)
             if overrides:
+                logger.info(f"Applying overrides: {overrides}")
                 for override in overrides:
                     if override.startswith("~"):
                         # Handle exclusion override (e.g., ~leader_arms.left)
@@ -62,6 +63,11 @@ class RobotService:
                         # Handle key=value override
                         key, value = override.split("=", 1)
                         self._apply_value_override(key, value)
+                
+                # Debug: log final camera configuration
+                logger.info(f"Final camera configuration: {self.robot_cfg.cameras}")
+            else:
+                logger.info("No overrides to apply")
 
             # Create and connect the robot
             logger.info("Creating ALOHA robot from configuration")
@@ -80,6 +86,9 @@ class RobotService:
                     {"id": name, "name": name} 
                     for name in self.robot.cameras.keys()
                 ]
+            else:
+                self.status["cameras"] = []
+                logger.info("No cameras configured for this robot connection")
             
             logger.info(f"Successfully connected to ALOHA robot with {len(self.status['available_arms'])} arms")
             
@@ -106,8 +115,44 @@ class RobotService:
                     logger.info(f"Excluded {key} from robot configuration")
 
     def _apply_value_override(self, key: str, value: str):
-        """Apply value overrides like max_relative_target=50"""
-        if hasattr(self.robot_cfg, key):
+        """Apply value overrides like max_relative_target=50 or robot.cameras={}"""
+        if key == "robot.cameras" and value == "{}":
+            # Special handling for disabling cameras
+            self.robot_cfg.cameras = {}
+            logger.info("Disabled all cameras via override")
+            return
+        elif key == "cameras" and value == "{}":
+            # Alternative format
+            self.robot_cfg.cameras = {}
+            logger.info("Disabled all cameras via override (alternative format)")
+            return
+            
+        if "." in key:
+            # Handle nested attributes like robot.cameras
+            parts = key.split(".")
+            obj = self.robot_cfg
+            for part in parts[:-1]:
+                if hasattr(obj, part):
+                    obj = getattr(obj, part)
+                else:
+                    logger.warning(f"Cannot find attribute {part} in {obj}")
+                    return
+            
+            final_key = parts[-1]
+            if hasattr(obj, final_key):
+                current_value = getattr(obj, final_key)
+                if isinstance(current_value, bool):
+                    setattr(obj, final_key, value.lower() == "true")
+                elif isinstance(current_value, int):
+                    setattr(obj, final_key, int(value))
+                elif isinstance(current_value, float):
+                    setattr(obj, final_key, float(value))
+                elif value == "{}":
+                    setattr(obj, final_key, {})
+                else:
+                    setattr(obj, final_key, value)
+                logger.info(f"Set {key} = {value}")
+        elif hasattr(self.robot_cfg, key):
             current_value = getattr(self.robot_cfg, key)
             if isinstance(current_value, bool):
                 setattr(self.robot_cfg, key, value.lower() == "true")
@@ -115,6 +160,8 @@ class RobotService:
                 setattr(self.robot_cfg, key, int(value))
             elif isinstance(current_value, float):
                 setattr(self.robot_cfg, key, float(value))
+            elif key == "cameras" and value == "{}":
+                setattr(self.robot_cfg, key, {})
             else:
                 setattr(self.robot_cfg, key, value)
             logger.info(f"Set {key} = {value}")
