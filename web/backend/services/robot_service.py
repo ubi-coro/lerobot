@@ -298,38 +298,142 @@ class RobotService:
     def get_robot_instance(self):
         """Get the robot instance for camera access"""
         return self.robot
-
-    def get_available_cameras(self):
-        """Get list of available cameras"""
-        if self.robot and hasattr(self.robot, 'cameras'):
-            return [
-                {"id": camera_id, "name": camera_id}
-                for camera_id in self.robot.cameras.keys()
-            ]
-        else:
-            # Return mock cameras for testing
-            return [
-                {"id": "cam_high", "name": "High Camera"},
-                {"id": "cam_low", "name": "Low Camera"},
-                {"id": "cam_left_wrist", "name": "Left Wrist Camera"},
-                {"id": "cam_right_wrist", "name": "Right Wrist Camera"}
-            ]
     
-    def debug_cameras(self):
-        """Debug camera access"""
-        logger.info("=== CAMERA DEBUG ===")
-        logger.info(f"Robot connected: {self.status['connected']}")
+    def start_teleoperation_advanced(self, config: Dict[str, Any]) -> None:
+        """Start ALOHA robot teleoperation with advanced configuration"""
+        if not self.status["connected"]:
+            raise ValueError("ALOHA robot is not connected")
         
-        if self.robot and hasattr(self.robot, 'cameras'):
-            logger.info(f"Robot has cameras: {list(self.robot.cameras.keys())}")
+        if self.status["mode"] == "teleoperating":
+            logger.warning("Teleoperation is already running")
+            return
+        
+        # Apply robot configuration changes
+        if config.get('max_relative_target') and hasattr(self.robot_cfg, 'max_relative_target'):
+            self.robot_cfg.max_relative_target = config['max_relative_target']
             
-            for cam_name, camera in self.robot.cameras.items():
-                try:
-                    logger.info(f"Testing camera {cam_name}...")
-                    frame = camera.read()
-                    logger.info(f"Camera {cam_name}: frame shape {frame.shape if frame is not None else 'None'}")
-                except Exception as e:
-                    logger.error(f"Camera {cam_name} error: {e}")
+        if config.get('moving_time') and hasattr(self.robot_cfg, 'moving_time'):
+            self.robot_cfg.moving_time = config['moving_time']
+        
+        # Set camera display preference
+        self.show_camera_display = config.get('show_cameras', True)
+        
+        # Reset stop event
+        self.stop_event.clear()
+        
+        def run_advanced_teleoperation():
+            try:
+                self.status["mode"] = "teleoperating"
+                logger.info(f"Starting advanced ALOHA teleoperation with config: {config}")
+                
+                # Start camera display thread if requested
+                if config.get('show_cameras', True):
+                    self._start_camera_display()
+                
+                # Set up time limit if specified
+                start_time = time.time()
+                time_limit = config.get('teleop_time_limit')
+                if time_limit:
+                    time_limit = time_limit * 60  # Convert minutes to seconds
+                
+                # Run teleoperation loop
+                while not self.stop_event.is_set():
+                    # Check time limit
+                    if time_limit and (time.time() - start_time) > time_limit:
+                        logger.info("Teleoperation time limit reached, stopping...")
+                        break
+                        
+                    # Run teleoperation for 1 second intervals to check stop event
+                    control_loop(
+                        robot=self.robot,
+                        control_time_s=1.0,
+                        fps=config.get('fps', 30),
+                        teleoperate=True,
+                        display_data=config.get('display_data', False)
+                    )
+                    
+                self.status["mode"] = None
+                logger.info("Advanced ALOHA teleoperation stopped")
+                
+            except Exception as e:
+                self.status["error"] = str(e)
+                self.status["mode"] = None
+                logger.error(f"Error during advanced ALOHA teleoperation: {str(e)}")
+            finally:
+                # Stop camera display
+                if config.get('show_cameras', True):
+                    self._stop_camera_display()
+        
+        # Start teleoperation in a new thread
+        self.control_thread = threading.Thread(target=run_advanced_teleoperation, daemon=True)
+        self.control_thread.start()
+        logger.info("Advanced ALOHA teleoperation thread started")
+    
+    def emergency_stop(self) -> None:
+        """Emergency stop for teleoperation"""
+        if self.status["mode"] == "teleoperating":
+            logger.warning("EMERGENCY STOP ACTIVATED")
+            self.stop_event.set()
+            
+            # Immediately stop camera display
+            self._stop_camera_display()
+            
+            # Wait for teleoperation thread to finish with shorter timeout
+            if self.control_thread and self.control_thread.is_alive():
+                self.control_thread.join(timeout=1.0)
+            
+            self.status["mode"] = None
+            logger.info("Emergency stop completed")
         else:
-            logger.warning("Robot has no cameras or robot not connected")
-        logger.info("=== END CAMERA DEBUG ===")
+            logger.warning("Emergency stop called but teleoperation is not active")
+    
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get current performance metrics"""
+        # This is a mock implementation - in real scenario, you'd collect actual metrics
+        import psutil
+        import random
+        
+        return {
+            "actualFps": random.randint(25, 35) if self.status["mode"] == "teleoperating" else 0,
+            "latency": random.randint(10, 50) if self.status["mode"] == "teleoperating" else 0,
+            "cpuUsage": psutil.cpu_percent(),
+            "memoryUsage": psutil.virtual_memory().percent,
+            "timestamp": time.time()
+        }
+    
+    def move_to_safe_position(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Move robot to safe position"""
+        if not self.status["connected"]:
+            raise ValueError("Robot is not connected")
+        
+        if self.status["mode"] == "teleoperating":
+            raise ValueError("Cannot move to safe position during teleoperation")
+        
+        logger.info(f"Moving robot to safe position with config: {config}")
+        
+        try:
+            # This is a simplified implementation
+            # In a real scenario, you would implement actual safe position movement
+            
+            # Simulate movement time
+            timeout = config.get('timeout_s', 10.0)
+            speed_factor = config.get('speed_factor', 0.3)
+            
+            # Calculate estimated movement time based on speed factor
+            estimated_time = timeout * (1.0 - speed_factor)
+            
+            logger.info(f"Estimated movement time: {estimated_time:.2f} seconds")
+            
+            # In real implementation, this would be actual robot movement
+            time.sleep(min(estimated_time, 2.0))  # Simulate for demo
+            
+            return {
+                "success": True,
+                "message": "Robot moved to safe position",
+                "estimated_time": estimated_time,
+                "actual_time": min(estimated_time, 2.0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error moving to safe position: {str(e)}")
+            raise

@@ -14,7 +14,27 @@ export const useRobotStore = defineStore('robot', {
     hasError: false,
     socket: null,
     cameraStreams: {},
-    statusPollingTimer: null
+    statusPollingTimer: null,
+    // Add teleoperation configuration state
+    teleoperationConfig: {
+      fps: 30,
+      showCameras: true,
+      maxRelativeTarget: 25,
+      operationMode: 'bimanual',
+      enableSafeShutdown: true,
+      movingTime: 0.1,
+      teleopTimeLimit: null,
+      performanceMonitoring: false,
+      debugLevel: 'INFO'
+    },
+    // Performance monitoring state
+    performanceMetrics: {
+      actualFps: 0,
+      latency: 0,
+      cpuUsage: 0,
+      memoryUsage: 0,
+      timestamp: null
+    }
   }),
 
   getters: {
@@ -175,6 +195,106 @@ export const useRobotStore = defineStore('robot', {
       if (this.statusPollingTimer) {
         clearInterval(this.statusPollingTimer);
         this.statusPollingTimer = null;
+      }
+    },
+
+    // Set teleoperation configuration
+    setTeleoperationConfig(config) {
+      this.teleoperationConfig = { ...this.teleoperationConfig, ...config };
+      console.log('Teleoperation configuration updated:', this.teleoperationConfig);
+    },
+
+    // Enhanced teleoperation start with configuration
+    async startTeleoperationWithConfig(config = null) {
+      try {
+        const finalConfig = config || this.teleoperationConfig;
+        
+        // Prepare configuration for backend
+        const teleoperationParams = {
+          fps: finalConfig.fps,
+          show_cameras: finalConfig.showCameras,
+          max_relative_target: finalConfig.maxRelativeTarget,
+          operation_mode: finalConfig.operationMode,
+          enable_safe_shutdown: finalConfig.enableSafeShutdown,
+          moving_time: finalConfig.movingTime,
+          teleop_time_limit: finalConfig.teleopTimeLimit,
+          performance_monitoring: finalConfig.performanceMonitoring,
+          debug_level: finalConfig.debugLevel
+        };
+
+        const response = await robotApi.startTeleoperationAdvanced(teleoperationParams);
+
+        if (response.data.status === 'success') {
+          this.status.mode = 'teleoperating';
+          
+          // Start performance monitoring if enabled
+          if (finalConfig.performanceMonitoring) {
+            this.startPerformanceMonitoring();
+          }
+          
+          console.log('Advanced teleoperation started with config:', finalConfig);
+        } else {
+          this.hasError = true;
+          this.errorMessage = response.data.message || 'Failed to start teleoperation';
+        }
+      } catch (error) {
+        console.error('Error starting advanced teleoperation:', error);
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to start teleoperation';
+      }
+    },
+
+    // Stop enhanced teleoperation
+    async stopTeleoperationAdvanced() {
+      try {
+        const response = await robotApi.stopTeleoperation();
+
+        if (response.data.status === 'success') {
+          this.status.mode = null;
+          this.stopPerformanceMonitoring();
+          console.log('Advanced teleoperation stopped');
+        }
+      } catch (error) {
+        console.error('Error stopping teleoperation:', error);
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
+      }
+    },
+
+    // Performance monitoring
+    startPerformanceMonitoring() {
+      if (this.performanceTimer) {
+        clearInterval(this.performanceTimer);
+      }
+
+      this.performanceTimer = setInterval(async () => {
+        try {
+          const response = await robotApi.getPerformanceMetrics();
+          if (response.data.status === 'success') {
+            this.performanceMetrics = {
+              ...this.performanceMetrics,
+              ...response.data.data,
+              timestamp: new Date()
+            };
+          }
+        } catch (error) {
+          console.error('Error fetching performance metrics:', error);
+        }
+      }, 1000);
+    },
+
+    stopPerformanceMonitoring() {
+      if (this.performanceTimer) {
+        clearInterval(this.performanceTimer);
+        this.performanceTimer = null;
+      }
+    },
+
+    // Emergency stop functionality
+    emergencyStop() {
+      if (this.status.mode === 'teleoperating') {
+        this.stopTeleoperationAdvanced();
+        console.log('Emergency stop activated');
       }
     }
   }

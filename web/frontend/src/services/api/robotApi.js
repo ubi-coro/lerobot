@@ -101,5 +101,36 @@ export default {
     return apiCall('/teleoperate/stop', {
       method: 'POST'
     });
+  },
+
+  // Advanced teleoperation start with full configuration
+  startTeleoperationAdvanced(config) {
+    console.log('Calling startTeleoperationAdvanced with config:', config);
+    return apiCall('/teleoperate/start-advanced', {
+      method: 'POST',
+      body: config
+    });
+  },
+
+  // Get performance metrics
+  getPerformanceMetrics() {
+    return apiCall('/teleoperate/performance');
+  },
+
+  // Emergency stop
+  emergencyStop() {
+    console.log('Calling emergencyStop...');
+    return apiCall('/teleoperate/emergency-stop', {
+      method: 'POST'
+    });
+  },
+
+  // Move robot to safe position
+  moveToSafePosition(config = {}) {
+    console.log('Calling moveToSafePosition with config:', config);
+    return apiCall('/robot/safe-position', {
+      method: 'POST',
+      body: config
+    });
   }
 };
