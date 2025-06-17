@@ -74,7 +74,22 @@ class RobotService:
             self.robot = make_robot_from_config(self.robot_cfg)
             
             logger.info("Connecting to ALOHA robot")
-            self.robot.connect()
+            
+            # Try to connect with detailed camera error handling
+            try:
+                self.robot.connect()
+            except Exception as e:
+                # Check if this is a camera-related error
+                error_str = str(e).lower()
+                if any(cam_indicator in error_str for cam_indicator in ['camera', 'realsense', 'opencv', 'serial_number']):
+                    # This is likely a camera error - provide detailed feedback
+                    camera_error_msg = self._parse_camera_error(str(e))
+                    self.status["error"] = camera_error_msg
+                    logger.error(f"Camera connection failed: {camera_error_msg}")
+                    raise Exception(camera_error_msg)
+                else:
+                    # Other connection error
+                    raise e
             
             self.status["connected"] = True
             self.status["error"] = None
@@ -484,3 +499,49 @@ class RobotService:
         except Exception as e:
             logger.error(f"Error moving to safe position: {str(e)}")
             raise
+
+    def _parse_camera_error(self, error_message: str) -> str:
+        """Parse camera connection errors and provide user-friendly messages"""
+        error_lower = error_message.lower()
+        
+        # Check for specific camera types and create helpful messages
+        if "can't access intelrealsensecamera" in error_lower:
+            # Extract serial number if available
+            import re
+            serial_match = re.search(r'intelrealsensecamera\((\d+)\)', error_message)
+            if serial_match:
+                serial_number = serial_match.group(1)
+                # Try to identify which camera this is based on common ALOHA serial numbers
+                camera_name = "Unknown camera"
+                if "130322274116" in serial_number:
+                    camera_name = "High camera (cam_high)"
+                elif "130322272007" in serial_number:
+                    camera_name = "Low camera (cam_low)"
+                elif "218622276088" in serial_number:
+                    camera_name = "Left wrist camera (cam_left_wrist)"
+                elif "218622270253" in serial_number:
+                    camera_name = "Right wrist camera (cam_right_wrist)"
+                
+                return f"Camera connection failed: {camera_name} (Serial: {serial_number}) is not accessible. This camera may be disconnected, broken, or in use by another application. To continue without cameras, please select 'Demo Default without Cameras' and reconnect."
+            else:
+                return f"Intel RealSense camera connection failed: {error_message}. To continue without cameras, please select 'Demo Default without Cameras' and reconnect."
+        
+        elif "can't access opencvcamera" in error_lower:
+            # Extract camera index if available
+            import re
+            index_match = re.search(r'opencvcamera\((\d+)\)', error_message)
+            if index_match:
+                camera_index = index_match.group(1)
+                return f"Camera connection failed: OpenCV camera at index {camera_index} is not accessible. This camera may be disconnected, broken, or in use by another application. To continue without cameras, please select 'Demo Default without Cameras' and reconnect."
+            else:
+                return f"OpenCV camera connection failed: {error_message}. To continue without cameras, please select 'Demo Default without Cameras' and reconnect."
+        
+        elif "serial_number" in error_lower and "available cameras" in error_lower:
+            return f"Camera connection failed: One or more cameras with the configured serial numbers are not available. Please check camera connections or select 'Demo Default without Cameras' to continue without cameras. Error: {error_message}"
+        
+        elif "camera_index" in error_lower and "available cameras" in error_lower:
+            return f"Camera connection failed: One or more cameras with the configured indices are not available. Please check camera connections or select 'Demo Default without Cameras' to continue without cameras. Error: {error_message}"
+        
+        else:
+            # Generic camera error
+            return f"Camera connection failed: {error_message}. To continue without cameras, please select 'Demo Default without Cameras' and reconnect."

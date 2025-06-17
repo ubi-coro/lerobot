@@ -27,6 +27,11 @@
       >
         {{ isLoading ? 'Connecting...' : 'Connect ALOHA Robot' }}
       </button>
+
+      <!-- Show local error message if any -->
+      <div v-if="errorMessage" class="alert alert-danger mt-3">
+        {{ errorMessage }}
+      </div>
     </div>
 
     <div v-else class="robot-controls">
@@ -53,7 +58,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed } from 'vue';
 import { useRobotStore } from '@/stores/robotStore';
 import robotApi from '@/services/api/robotApi';
 
@@ -67,7 +72,6 @@ const errorMessage = ref('');
 
 // Use computed properties to get reactive state from the store
 const isConnected = computed(() => robotStore.isConnected);
-const robotStatus = computed(() => robotStore.status);
 
 // Helper function to get configuration settings
 const getConfigurationSettings = (configName) => {
@@ -79,76 +83,68 @@ const getConfigurationSettings = (configName) => {
 };
 
 const connectAloha = async () => {
-  console.log('Attempting to connect ALOHA robot...');
-  isLoading.value = true;
-  errorMessage.value = '';
-
+  console.log('Connect button clicked');
+  
   try {
+    isLoading.value = true;
+    errorMessage.value = '';
+    
+    // Clear store errors by setting status.error to null
+    robotStore.status.error = null;
+    
     const configSettings = getConfigurationSettings(configuration.value);
+    console.log('Making connection request:', { operationMode: operationMode.value, configSettings });
+    
     const response = await robotApi.connect(operationMode.value, configSettings);
-    console.log('Connect response:', response);
-
-    if (response.data.status === 'success') {
-      // Update the store with the connection status
+    
+    if (response?.data?.status === 'success') {
+      // Update store
       robotStore.status.connected = true;
       robotStore.status = { ...robotStore.status, ...response.data.data };
-      
-      // Store the camera configuration setting
       robotStore.teleoperationConfig.showCameras = configSettings.enableCameras;
       
-      console.log('ALOHA robot connected:', response.data.data);
-      console.log('Camera configuration:', configSettings.enableCameras);
+      console.log('Connection successful');
     } else {
-      errorMessage.value = response.data.message || 'Connection failed';
-      console.error('Connection failed:', response.data);
+      const error = response?.data?.message || 'Connection failed';
+      errorMessage.value = error;
+      robotStore.status.error = error;
     }
   } catch (error) {
-    console.error('Error connecting to ALOHA robot:', error);
-    errorMessage.value = error.response?.data?.message || `Connection failed: ${error.message}`;
+    console.error('Connection error:', error);
+    const errorMsg = error?.response?.data?.message || error?.message || 'Connection failed';
+    errorMessage.value = errorMsg;
+    robotStore.status.error = errorMsg;
   } finally {
     isLoading.value = false;
   }
 };
 
 const disconnectRobot = async () => {
-  console.log('Attempting to disconnect robot...');
-  isLoading.value = true;
-  
   try {
-    // Stop teleoperation if it's running before disconnecting
-    if (robotStore.isTeleoperating) {
-      await robotStore.stopTeleoperation();
-    }
-
-    const response = await robotApi.disconnect();
-    console.log('Disconnect response:', response);
-
-    if (response.data.status === 'success') {
-      robotStore.status.connected = false;
-      robotStore.status.mode = null;
-      robotStore.status.available_arms = [];
-      robotStore.status.cameras = [];
-      
-      // Reset camera configuration
-      robotStore.teleoperationConfig.showCameras = false;
-      
-      console.log('Robot disconnected');
-    } else {
-      errorMessage.value = response.data.message || 'Failed to disconnect';
-    }
+    isLoading.value = true;
+    await robotApi.disconnect();
+    
+    // Update store - clear error and reset connection status
+    robotStore.status.connected = false;
+    robotStore.status.mode = null;
+    robotStore.status.available_arms = [];
+    robotStore.status.cameras = [];
+    robotStore.status.error = null; // Clear any error state
+    
+    console.log('Disconnected successfully');
   } catch (error) {
-    console.error('Error disconnecting robot:', error);
-    errorMessage.value = error.response?.data?.message || 'Failed to disconnect';
+    console.error('Disconnect error:', error);
   } finally {
     isLoading.value = false;
   }
 };
-
-// Initialize store when component mounts
-onMounted(() => {
-  robotStore.initSocket();
-});
 </script>
+
+<style scoped>
+.aloha-robot-control {
+  padding: 15px;
+}
+</style>
 
 <style scoped>
 .robot-connection {

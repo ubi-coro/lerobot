@@ -82,58 +82,76 @@
           
           <!-- Center area for robot status and teleoperation -->
           <div class="col-lg-8">
-            <!-- Robot Status -->
-            <div class="mb-4" v-if="isConnected">
+            <!-- Robot Status (Always visible) -->
+            <div class="mb-4">
               <h2 class="h5 mb-3">
                 <i class="bi bi-info-circle me-2"></i>
                 Robot Status
               </h2>
               <div class="card">
                 <div class="card-body">
-                  <div class="row g-3">
-                    <div class="col-md-3">
-                      <div class="text-center">
-                        <div class="h4 mb-1">{{ robotStore.status.available_arms?.length || 0 }}</div>
-                        <div class="text-muted small">Available Arms</div>
-                      </div>
-                    </div>
-                    <div class="col-md-3">
-                      <div class="text-center">
-                        <div class="h4 mb-1">{{ robotStore.availableCameras?.length || 0 }}</div>
-                        <div class="text-muted small">Active Cameras</div>
-                      </div>
-                    </div>
-                    <div class="col-md-3">
-                      <div class="text-center">
-                        <div class="h4 mb-1">{{ robotStore.status.mode || 'Idle' }}</div>
-                        <div class="text-muted small">Current Mode</div>
-                      </div>
-                    </div>
-                    <div class="col-md-3">
+                  <!-- Connection Status Display -->
+                  <div class="row g-3 mb-3">
+                    <div class="col-12">
                       <div class="text-center">
                         <div class="h4 mb-1">
-                          <span class="badge" :class="isConnected ? 'bg-success' : 'bg-secondary'">
-                            {{ isConnected ? 'Connected' : 'Disconnected' }}
+                          <span class="badge" :class="getConnectionStatusBadgeClass()">
+                            {{ getConnectionStatusText() }}
                           </span>
                         </div>
                         <div class="text-muted small">Connection Status</div>
                       </div>
                     </div>
                   </div>
+
+                  <!-- Connected State - Show detailed stats -->
+                  <div v-if="isConnected" class="row g-3">
+                    <div class="col-md-4">
+                      <div class="text-center">
+                        <div class="h4 mb-1">{{ robotStore.status.available_arms?.length || 0 }}</div>
+                        <div class="text-muted small">Available Arms</div>
+                      </div>
+                    </div>
+                    <div class="col-md-4">
+                      <div class="text-center">
+                        <div class="h4 mb-1">{{ robotStore.availableCameras?.length || 0 }}</div>
+                        <div class="text-muted small">Active Cameras</div>
+                      </div>
+                    </div>
+                    <div class="col-md-4">
+                      <div class="text-center">
+                        <div class="h4 mb-1">{{ robotStore.status.mode || 'Idle' }}</div>
+                        <div class="text-muted small">Current Mode</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Disconnected State - Show basic info -->
+                  <div v-else class="text-center text-muted">
+                    <i class="bi bi-robot display-6 mb-3"></i>
+                    <p class="mb-0">No robot connected. Use the Robot Connection panel to connect to your ALOHA robot.</p>
+                  </div>
                   
-                  <!-- Error Information Display -->
+                  <!-- Error Information Display (Always visible when there's an error) -->
                   <div v-if="robotStore.hasError" class="mt-3">
                     <div class="alert alert-danger mb-0">
                       <div class="d-flex align-items-start">
                         <i class="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
                         <div class="flex-grow-1">
-                          <div class="fw-bold">System Error Detected</div>
+                          <div class="fw-bold">Connection Error</div>
                           <div class="small mt-1">{{ robotStore.errorMessage }}</div>
                           <div class="small text-muted mt-2">
-                            <i class="bi bi-clock me-1"></i>
-                            Check terminal/logs for detailed technical information
+                            <i class="bi bi-lightbulb me-1"></i>
+                            Try selecting a different configuration or check your robot connections
                           </div>
                         </div>
+                        <button 
+                          type="button" 
+                          class="btn-close btn-close-white ms-2" 
+                          @click="clearError"
+                          aria-label="Dismiss error"
+                          title="Dismiss this error message"
+                        ></button>
                       </div>
                     </div>
                   </div>
@@ -309,6 +327,27 @@ const hasCameras = computed(() => {
          robotStore.teleoperationConfig?.showCameras === true;
 });
 
+// Helper methods for robot status display
+const getConnectionStatusText = () => {
+  if (robotStore.isConnected) {
+    return 'Connected';
+  } else if (robotStore.hasError) {
+    return 'Connection Failed';
+  } else {
+    return 'Disconnected';
+  }
+};
+
+const getConnectionStatusBadgeClass = () => {
+  if (robotStore.isConnected) {
+    return 'bg-success';
+  } else if (robotStore.hasError) {
+    return 'bg-danger';
+  } else {
+    return 'bg-secondary';
+  }
+};
+
 // Methods for teleoperation control
 const startTeleoperation = async () => {
   try {
@@ -340,6 +379,11 @@ const emergencyStop = async () => {
   } catch (error) {
     console.error('Error during emergency stop:', error);
   }
+};
+
+// Method to clear error messages
+const clearError = () => {
+  robotStore.status.error = null;
 };
 </script>
 
@@ -399,4 +443,3 @@ body.dark-mode .nav-tabs .nav-link.active {
   }
 }
 </style>
-```
