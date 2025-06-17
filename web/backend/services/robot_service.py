@@ -48,6 +48,9 @@ class RobotService:
             self.robot_cfg = AlohaRobotConfig(
                 calibration_dir=calibration_dir,
                 max_relative_target=25,
+                # INTEGRATION POINT: Error monitoring is enabled by default
+                # Can be disabled by setting enable_error_monitoring=False here
+                enable_error_monitoring=True,  # Enable robust motor error handling
                 mock=self.use_mock
             )
 

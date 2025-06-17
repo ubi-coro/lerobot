@@ -260,6 +260,40 @@
             </div>
           </div>
         </div>
+
+        <!-- Camera Debug Info Section -->
+        <div class="row mt-4">
+          <div class="col-12">
+            <div class="card" style="border: 2px solid #007bff; background-color: #e3f2fd;">
+              <div class="card-header" style="background-color: #1976d2; color: white;">
+                <h5 class="card-title mb-0">🔍 Camera Debug Info</h5>
+              </div>
+              <div class="card-body">
+                <div class="row">
+                  <div class="col-md-6">
+                    <p><strong>Socket Connected:</strong> {{ robotStore.socket?.connected || false }}</p>
+                    <p><strong>Available Cameras:</strong> {{ robotStore.status?.cameras?.length || 0 }}</p>
+                    <p><strong>Camera Names:</strong> {{ getCameraNames() }}</p>
+                  </div>
+                  <div class="col-md-6">
+                    <p><strong>Robot Connected:</strong> {{ robotStore.isConnected }}</p>
+                    <p><strong>Teleoperation Active:</strong> {{ robotStore.isTeleoperating }}</p>
+                    <button class="btn btn-primary btn-sm me-2" @click="testCameraStreams">Test Camera Streams</button>
+                    <button class="btn btn-secondary btn-sm" @click="stopTestStreams">Stop Test</button>
+                  </div>
+                </div>
+                <div class="mt-3">
+                  <h6>Camera Streams Active:</h6>
+                  <p>{{ Object.keys(robotStore.cameraStreams || {}).join(', ') || 'None' }}</p>
+                </div>
+                <div class="mt-3">
+                  <h6>Debug Data:</h6>
+                  <pre style="font-size: 12px; max-height: 150px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 4px;">{{ getDebugInfo() }}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Enhanced Teleoperation Tab -->
@@ -307,7 +341,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useRobotStore } from '@/stores/robotStore';
 import RobotConnection from '@/components/robot/RobotConnection.vue';
 import EnhancedTeleoperationPanel from '@/components/robot/EnhancedTeleoperationPanel.vue';
@@ -317,6 +351,12 @@ import TeleoperationDocs from '@/components/robot/TeleoperationDocs.vue';
 
 // Initialize the robot store
 const robotStore = useRobotStore();
+
+// Initialize socket connection when component mounts
+onMounted(() => {
+  console.log('🔌 ControlView mounted - initializing socket...');
+  robotStore.initSocket();
+});
 
 // Computed properties
 const isConnected = computed(() => robotStore.isConnected);
@@ -384,6 +424,68 @@ const emergencyStop = async () => {
 // Method to clear error messages
 const clearError = () => {
   robotStore.status.error = null;
+};
+
+// Debug helper methods
+const getCameraNames = () => {
+  const cameras = robotStore.status?.cameras || [];
+  if (cameras.length === 0) return 'None';
+  return cameras.map(camera => {
+    if (typeof camera === 'string') return camera;
+    return camera.name || camera.id || 'Unknown';
+  }).join(', ');
+};
+
+const getDebugInfo = () => {
+  return JSON.stringify({
+    socket: {
+      connected: robotStore.socket?.connected || false,
+      id: robotStore.socket?.id || null
+    },
+    robot: {
+      connected: robotStore.isConnected,
+      teleoperating: robotStore.isTeleoperating,
+      hasError: robotStore.hasError,
+      errorMessage: robotStore.errorMessage
+    },
+    cameras: {
+      available: robotStore.status?.cameras || [],
+      streams: Object.keys(robotStore.cameraStreams || {}),
+      showCameras: robotStore.teleoperationConfig?.showCameras
+    }
+  }, null, 2);
+};
+
+const testCameraStreams = () => {
+  console.log('🧪 Testing camera streams...');
+  robotStore.initSocket();
+  
+  // Wait a moment for socket to connect, then start test streams
+  setTimeout(() => {
+    const testCameras = ['cam_high', 'cam_right_wrist', 'cam_left_wrist', 'cam_low'];
+    testCameras.forEach(cameraId => {
+      console.log(`Starting test stream for ${cameraId}`);
+      robotStore.socket?.emit('start_camera_stream', {
+        camera_id: cameraId,
+        fps: 10
+      });
+    });
+  }, 1000);
+};
+
+const stopTestStreams = () => {
+  console.log('🛑 Stopping test camera streams...');
+  const testCameras = ['cam_high', 'cam_right_wrist', 'cam_left_wrist', 'cam_low'];
+  testCameras.forEach(cameraId => {
+    console.log(`Stopping test stream for ${cameraId}`);
+    robotStore.socket?.emit('stop_camera_stream', {
+      camera_id: cameraId
+    });
+  });
+  // Clear camera streams after a moment
+  setTimeout(() => {
+    robotStore.cameraStreams = {};
+  }, 500);
 };
 </script>
 

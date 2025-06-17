@@ -48,20 +48,59 @@ export const useRobotStore = defineStore('robot', {
     // Initialize socket connection
     initSocket() {
       if (!this.socket) {
-        this.socket = io();
+        // Import socket.io-client
+        this.socket = io('http://localhost:5000'); // Explicitly connect to backend port
 
         this.socket.on('connect', () => {
-          console.log('Socket connected');
+          console.log('Socket connected to backend');
         });
 
         this.socket.on('disconnect', () => {
-          console.log('Socket disconnected');
+          console.log('Socket disconnected from backend');
         });
 
         this.socket.on('camera_frame', (data) => {
           // Handle camera frame data
+          console.log(`Received camera frame for ${data.camera_id}`);
           this.cameraStreams[data.camera_id] = data.frame;
         });
+
+        this.socket.on('connect_error', (error) => {
+          console.error('Socket connection error:', error);
+        });
+      }
+    },
+
+    // Start camera streams for available cameras
+    startCameraStreams(fps = 10) {
+      if (!this.socket) {
+        this.initSocket();
+      }
+
+      // Start streams for all available cameras
+      this.status.cameras.forEach(camera => {
+        const cameraId = camera.name || camera.id || camera;
+        console.log(`Starting camera stream for ${cameraId}`);
+        this.socket.emit('start_camera_stream', {
+          camera_id: cameraId,
+          fps: fps
+        });
+      });
+    },
+
+    // Stop camera streams
+    stopCameraStreams() {
+      if (this.socket) {
+        this.status.cameras.forEach(camera => {
+          const cameraId = camera.name || camera.id || camera;
+          console.log(`Stopping camera stream for ${cameraId}`);
+          this.socket.emit('stop_camera_stream', {
+            camera_id: cameraId
+          });
+        });
+        
+        // Clear camera streams
+        this.cameraStreams = {};
       }
     },
 
@@ -137,10 +176,20 @@ export const useRobotStore = defineStore('robot', {
     // Start teleoperation
     async startTeleoperation(fps = 30) {
       try {
-        const response = await robotApi.startTeleoperation(fps, false);
+        // Initialize socket connection if not already done
+        this.initSocket();
+        
+        const response = await robotApi.startTeleoperation(fps, this.teleoperationConfig.showCameras);
 
         if (response.data.status === 'success') {
           this.status.mode = 'teleoperating';
+          
+          // Start camera streams if cameras are enabled in config
+          if (this.teleoperationConfig.showCameras && this.status.cameras && this.status.cameras.length > 0) {
+            console.log('Starting camera streams for simple teleoperation');
+            this.startCameraStreams(fps);
+          }
+          
           console.log('Teleoperation started');
         }
       } catch (error) {
@@ -156,6 +205,10 @@ export const useRobotStore = defineStore('robot', {
 
         if (response.data.status === 'success') {
           this.status.mode = null;
+          
+          // Stop camera streams
+          this.stopCameraStreams();
+          
           console.log('Teleoperation stopped');
         }
       } catch (error) {
@@ -224,6 +277,9 @@ export const useRobotStore = defineStore('robot', {
       try {
         const finalConfig = config || this.teleoperationConfig;
         
+        // Initialize socket connection if not already done
+        this.initSocket();
+        
         // Prepare configuration for backend
         const teleoperationParams = {
           fps: finalConfig.fps,
@@ -241,6 +297,12 @@ export const useRobotStore = defineStore('robot', {
 
         if (response.data.status === 'success') {
           this.status.mode = 'teleoperating';
+          
+          // Start camera streams if cameras are enabled
+          if (finalConfig.showCameras && this.status.cameras && this.status.cameras.length > 0) {
+            console.log('Starting camera streams for teleoperation');
+            this.startCameraStreams(finalConfig.fps || 10);
+          }
           
           // Start performance monitoring if enabled
           if (finalConfig.performanceMonitoring) {
@@ -264,6 +326,10 @@ export const useRobotStore = defineStore('robot', {
 
         if (response.data.status === 'success') {
           this.status.mode = null;
+          
+          // Stop camera streams
+          this.stopCameraStreams();
+          
           this.stopPerformanceMonitoring();
           console.log('Advanced teleoperation stopped');
         }

@@ -476,9 +476,15 @@ class FootSwitchHandler:
 
 
 def teleop_step(robot):
+    # INTEGRATION POINT: Error monitoring hook in control_utils
+    # The main error handling is implemented in the robot's teleop_step method,
+    # but we add a hook here for additional control-level error handling if needed
+    
     for name in robot.follower_arms:
         if (robot.leader_arms[name].read("Torque_Enable") != TorqueMode.DISABLED.value).any():
             robot.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+    
+    # Call the robot's teleop_step method (which includes error monitoring)
     return robot.teleop_step(record_data=True)
     # for name in robot.follower_arms:
     #     try:

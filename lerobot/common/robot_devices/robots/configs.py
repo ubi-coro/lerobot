@@ -55,6 +55,11 @@ class ManipulatorRobotConfig(RobotConfig):
     # gripper is not put in torque mode.
     gripper_open_degree: float | None = None
 
+    # INTEGRATION POINT: Enhanced error monitoring configuration
+    # Enable advanced Dynamixel motor error detection and recovery
+    # Set to False to disable error monitoring (useful for debugging or compatibility)
+    enable_error_monitoring: bool = True
+
     mock: bool = False
 
     def __post_init__(self):
