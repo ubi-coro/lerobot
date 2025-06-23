@@ -108,7 +108,7 @@ def is_headless():
         return True
 
 
-def predict_action(observation, policy, device, use_amp):
+def predict_action(observation, policy, device, use_amp, single_task=None):
     observation = copy(observation)
     with (
         torch.inference_mode(),
@@ -116,11 +116,17 @@ def predict_action(observation, policy, device, use_amp):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            if isinstance(observation[name], str):
+                continue
+
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
+
+        if single_task is not None:
+            observation["task"] = [single_task]
 
         # Compute the next action with the policy
         # based on the current observation
@@ -349,10 +355,9 @@ def control_loop(
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
         if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
-            if action is not None:
-                for k, v in action.items():
-                    for i, vv in enumerate(v):
-                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
+            for k, v in action.items():
+                for i, vv in enumerate(v):
+                    rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
