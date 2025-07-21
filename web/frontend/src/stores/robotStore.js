@@ -368,12 +368,60 @@ export const useRobotStore = defineStore('robot', {
       }
     },
 
-    // Emergency stop functionality
-    emergencyStop() {
-      if (this.status.mode === 'teleoperating') {
-        this.stopTeleoperationAdvanced();
-        console.log('Emergency stop activated');
+    // Enhanced emergency stop functionality (FastTrack Step 1.2)
+    async emergencyStop() {
+      console.log('🚨 Emergency stop initiated');
+      
+      try {
+        // 1. Immediately stop teleoperation via API
+        const response = await fetch('/api/robot/teleoperate/emergency-stop', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Emergency stop API failed: ${response.status}`);
+        }
+
+        console.log('✅ Emergency stop API call successful');
+        
+      } catch (error) {
+        console.error('❌ Emergency stop API failed:', error);
+        // Continue with local cleanup even if API fails
       }
+
+      try {
+        // 2. Force local state cleanup regardless of API response
+        this.status.mode = null;
+        this.status.isConnected = false;
+        
+        // 3. Stop camera streams
+        this.stopCameraStreams();
+        
+        // 4. Stop performance monitoring
+        this.stopPerformanceMonitoring();
+        
+        // 5. Clear any timers or intervals
+        if (this.performanceTimer) {
+          clearInterval(this.performanceTimer);
+          this.performanceTimer = null;
+        }
+        
+        // 6. Emit emergency stop event via socket
+        if (this.socket && this.socket.connected) {
+          this.socket.emit('emergency_stop');
+        }
+        
+        console.log('✅ Emergency stop local cleanup completed');
+        
+      } catch (localError) {
+        console.error('❌ Emergency stop local cleanup failed:', localError);
+      }
+      
+      // 7. Always log completion
+      console.log('🚨 Emergency stop procedure completed');
     }
   }
 });

@@ -3,7 +3,7 @@
     <div class="row g-3">
       <!-- Teleoperation Configuration -->
       <div class="col-12">
-        <TeleoperationConfig @configurationApplied="onConfigurationApplied" />
+        <TeleoperationConfigSimplified @configurationApplied="onConfigurationApplied" />
       </div>
       
       
@@ -81,7 +81,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRobotStore } from '@/stores/robotStore';
-import TeleoperationConfig from './TeleoperationConfig.vue';
+import TeleoperationConfigSimplified from './TeleoperationConfigSimplified.vue';
 
 const robotStore = useRobotStore();
 
