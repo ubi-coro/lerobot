@@ -108,7 +108,7 @@ class ProcessManager:
             # Start FastAPI with uvicorn
             self.backend_process = subprocess.Popen([
                 sys.executable, "-m", "uvicorn", "main:socket_app", 
-                "--host", "0.0.0.0", "--port", "5000", "--reload"
+                "--host", "0.0.0.0", "--port", "8000", "--reload"
             ], cwd=backend_dir)
             
             self.processes.append(self.backend_process)
@@ -153,7 +153,7 @@ class ProcessManager:
             print(f"{Colors.RED}❌ Failed to start frontend: {e}{Colors.RESET}")
             return False
     
-    def wait_for_services(self, backend_url: str = "http://localhost:5000", 
+    def wait_for_services(self, backend_url: str = "http://localhost:8000", 
                          frontend_url: str = "http://localhost:5173") -> bool:
         """Wait for services to be ready"""
         try:
@@ -305,7 +305,7 @@ def main():
             sys.exit(1)
         
         # Wait for services to be ready
-        backend_url = "http://localhost:5000"
+        backend_url = "http://localhost:8000"
         frontend_url = "http://localhost:5173"
         
         pm.wait_for_services(backend_url, frontend_url)

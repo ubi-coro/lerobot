@@ -59,8 +59,6 @@ except ImportError as e:
 try:
     from modules.robot import router as robot_router
     from modules.teleoperation import router as teleoperation_router
-    from modules.aloha_teleoperation import router as aloha_teleoperation_router
-    from modules.aloha_hardware_api import router as aloha_hardware_router
     from modules.safety import router as safety_router
     from modules.monitoring import router as monitoring_router
     from modules.recording import router as recording_router
@@ -116,8 +114,6 @@ app.add_middleware(
 # Include module routers with their prefixes
 app.include_router(robot_router)
 app.include_router(teleoperation_router)
-app.include_router(aloha_teleoperation_router)
-app.include_router(aloha_hardware_router)
 app.include_router(safety_router)
 app.include_router(monitoring_router)
 app.include_router(recording_router)
@@ -343,37 +339,10 @@ app.state.sio = sio
 async def startup_event():
     """Initialize application on startup"""
     logger.info("🚀 Starting LeRobot Modular FastAPI Backend")
-    logger.info("📋 Loaded modules: robot, teleoperation, aloha-teleoperation, aloha-hardware, safety, monitoring, recording, configuration")
+    logger.info("📋 Loaded modules: robot, teleoperation, safety, monitoring, recording, configuration")
     
     if service_bridge:
         logger.info("🔗 Service bridge available for backward compatibility")
-    
-    # Initialize WebSocket manager for ALOHA teleoperation
-    try:
-        from modules.aloha_teleoperation import set_websocket_manager
-        
-        # Create a simple WebSocket manager
-        class WebSocketManager:
-            def __init__(self, sio_instance):
-                self.sio = sio_instance
-                
-            def broadcast_joint_data_sync(self, data):
-                """Synchronous broadcast for threading compatibility"""
-                try:
-                    # Use asyncio to run the async broadcast
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self.sio.emit('aloha_joint_update', data))
-                    loop.close()
-                except Exception as e:
-                    logger.error(f"Error broadcasting ALOHA joint data: {e}")
-                    
-        websocket_manager = WebSocketManager(sio)
-        set_websocket_manager(websocket_manager)
-        logger.info("🤖 ALOHA WebSocket manager initialized for real-time updates")
-        
-    except ImportError as e:
-        logger.warning(f"⚠️ ALOHA WebSocket manager not available: {e}")
     
     logger.info("✅ Backend initialization complete")
 

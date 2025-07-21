@@ -27,12 +27,16 @@ except ImportError as e:
     class MockRobotService:
         def __init__(self, use_mock=True):
             self.use_mock = use_mock
+            self.is_connected = False  # Add missing attribute
             self.status = {"mode": None, "is_connected": False}
         
-        def connect_aloha(self, overrides=None, enable_cameras=True):
+        def connect_aloha(self, overrides=None, enable_cameras=True, leader_only=False, show_cameras=True):
+            self.is_connected = True
+            self.status = {"mode": "connected", "is_connected": True}
             return {"status": "connected", "mock": True}
         
         def disconnect(self):
+            self.is_connected = False
             self.status = {"mode": None, "is_connected": False}
         
         def start_teleoperation(self, fps=30, show_cameras=True):

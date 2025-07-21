@@ -75,6 +75,15 @@ dependencies = [
     "zarr>=2.17.0",
 ]
 
+[project.scripts]
+# LeRobot Web GUI CLI Commands
+lerobot-gui = "lerobot.web.scripts.cli:gui_main"
+lerobot-gui-dev = "lerobot.web.scripts.cli:dev_main"
+lerobot-gui-backend = "lerobot.web.scripts.cli:backend_main"
+lerobot-gui-frontend = "lerobot.web.scripts.cli:frontend_main"
+lerobot-gui-shortcut = "lerobot.web.scripts.cli:create_shortcut_main"
+lerobot-gui-status = "lerobot.web.scripts.cli:status_main"
+
 [project.optional-dependencies]
 aloha = ["gym-aloha>=0.1.1 ; python_version < '4.0'"]
 docs = ["hf-doc-builder @ git+https://github.com/huggingface/doc-builder.git@main", "watchdog >= 6.0.0"]
@@ -97,6 +106,15 @@ stretch = [
 test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "pyserial>=3.5"]
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
+web = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "python-socketio>=5.11.0",
+    "click>=8.1.0",
+    "requests>=2.31.0",
+    "python-multipart>=0.0.6",
+    "opencv-python>=4.9.0",  # For web GUI camera support
+]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
 
 [tool.poetry]
