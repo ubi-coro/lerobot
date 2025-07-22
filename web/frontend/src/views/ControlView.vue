@@ -343,11 +343,11 @@
 <script setup>
 import { computed, onMounted } from 'vue';
 import { useRobotStore } from '@/stores/robotStore';
-import RobotConnection from '@/components/robot/RobotConnection.vue';
-import EnhancedTeleoperationPanel from '@/components/robot/EnhancedTeleoperationPanel.vue';
-import SafePositionControl from '@/components/robot/SafePositionControl.vue';
-import CameraViewer from '@/components/robot/CameraViewer.vue';
-import TeleoperationDocs from '@/components/robot/TeleoperationDocs.vue';
+import RobotConnection from '@/components/calibration/RobotConnection.vue';
+import EnhancedTeleoperationPanel from '@/components/teleoperation/EnhancedTeleoperationPanel.vue';
+import SafePositionControl from '@/components/calibration/SafePositionControl.vue';
+import CameraViewer from '@/components/dataVisualization/CameraViewer.vue';
+import TeleoperationDocs from '@/components/teleoperation/TeleoperationDocs.vue';
 
 // Initialize the robot store
 const robotStore = useRobotStore();

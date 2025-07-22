@@ -19,23 +19,63 @@
         </li>
         
         <li class="nav-item mb-1">
+          <router-link to="/teleoperation" class="nav-link text-light d-flex align-items-center" active-class="active">
+            <i class="bi bi-joystick me-2"></i>
+            <span v-if="!sidebarCollapsed">Teleoperation</span>
+          </router-link>
+        </li>
+        
+        <li class="nav-item mb-1">
+          <router-link to="/record-dataset" class="nav-link text-light d-flex align-items-center" active-class="active">
+            <i class="bi bi-record-circle me-2"></i>
+            <span v-if="!sidebarCollapsed">Record Dataset</span>
+          </router-link>
+        </li>
+        
+        <li class="nav-item mb-1">
+          <router-link to="/replay-dataset" class="nav-link text-light d-flex align-items-center" active-class="active">
+            <i class="bi bi-play-circle me-2"></i>
+            <span v-if="!sidebarCollapsed">Replay Dataset</span>
+          </router-link>
+        </li>
+        
+        <li class="nav-item mb-1">
+          <router-link to="/training" class="nav-link text-light d-flex align-items-center" active-class="active">
+            <i class="bi bi-cpu me-2"></i>
+            <span v-if="!sidebarCollapsed">Training</span>
+          </router-link>
+        </li>
+        
+        <li class="nav-item mb-1">
+          <router-link to="/calibration" class="nav-link text-light d-flex align-items-center" active-class="active">
+            <i class="bi bi-tools me-2"></i>
+            <span v-if="!sidebarCollapsed">Calibration</span>
+          </router-link>
+        </li>
+        
+        <li class="nav-item mb-1">
+          <router-link to="/data-visualization" class="nav-link text-light d-flex align-items-center" active-class="active">
+            <i class="bi bi-graph-up me-2"></i>
+            <span v-if="!sidebarCollapsed">Data Visualization</span>
+          </router-link>
+        </li>
+        
+        <!-- Legacy/Development section -->
+        <li class="nav-item mb-1 mt-3">
+          <div class="text-muted small px-3" v-if="!sidebarCollapsed">Legacy</div>
+        </li>
+        
+        <li class="nav-item mb-1">
           <router-link to="/control" class="nav-link text-light d-flex align-items-center" active-class="active">
             <i class="bi bi-robot me-2"></i>
-            <span v-if="!sidebarCollapsed">Robot Control</span>
+            <span v-if="!sidebarCollapsed">Robot Control (Legacy)</span>
           </router-link>
         </li>
         
         <li class="nav-item mb-1">
-          <router-link to="/datasets" class="nav-link text-light d-flex align-items-center" active-class="active">
-            <i class="bi bi-database me-2"></i>
-            <span v-if="!sidebarCollapsed">Datasets (Under Construction)</span>
-          </router-link>
-        </li>
-        
-        <li class="nav-item mb-1">
-          <router-link to="/policies" class="nav-link text-light d-flex align-items-center" active-class="active">
-            <i class="bi bi-gear me-2"></i>
-            <span v-if="!sidebarCollapsed">Policies (Under Construction)</span>
+          <router-link to="/legacy-home" class="nav-link text-light d-flex align-items-center" active-class="active">
+            <i class="bi bi-list-ul me-2"></i>
+            <span v-if="!sidebarCollapsed">Legacy Dashboard</span>
           </router-link>
         </li>
       </ul>

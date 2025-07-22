@@ -44,10 +44,11 @@ class RobotService:
             if not os.path.exists(calibration_dir):
                 raise FileNotFoundError(f"Calibration directory not found: {calibration_dir}")
 
-            # Create ALOHA configuration with absolute path
+            # Create ALOHA configuration with absolute path - following LeRobot standards
             self.robot_cfg = AlohaRobotConfig(
                 calibration_dir=calibration_dir,
-                max_relative_target=25,
+                max_relative_target=25,  # LeRobot default for safety
+                moving_time=0.1,  # Critical ALOHA parameter for smooth motion
                 # INTEGRATION POINT: Error monitoring is enabled by default
                 # Can be disabled by setting enable_error_monitoring=False here
                 enable_error_monitoring=True,  # Enable robust motor error handling
@@ -185,7 +186,7 @@ class RobotService:
             logger.info(f"Set {key} = {value}")
 
     def start_teleoperation(self, fps: Optional[int] = 30, show_cameras: bool = True) -> None:
-        """Start ALOHA robot teleoperation with optional camera display"""
+        """Start ALOHA robot teleoperation following LeRobot patterns"""
         if not self.status["connected"]:
             raise ValueError("ALOHA robot is not connected")
         
@@ -193,7 +194,7 @@ class RobotService:
             logger.warning("Teleoperation is already running")
             return
         
-        # Set camera display preference
+        # Set camera display preference (LeRobot uses display_data parameter)
         self.show_camera_display = show_cameras
         
         # Reset stop event
@@ -202,18 +203,18 @@ class RobotService:
         def run_teleoperation():
             try:
                 self.status["mode"] = "teleoperating"
-                logger.info(f"Starting ALOHA teleoperation at {fps} FPS with camera display: {show_cameras}")
+                logger.info(f"Starting ALOHA teleoperation at {fps} FPS with display_data: {show_cameras}")
                 
                 # Start camera display thread if requested
                 if show_cameras:
                     self._start_camera_display()
                 
-                # Run teleoperation loop
+                # Run teleoperation loop using LeRobot's standard control_loop
                 while not self.stop_event.is_set():
-                    # Run teleoperation for 1 second intervals to check stop event
+                    # Use LeRobot's control_loop with proper parameters
                     control_loop(
                         robot=self.robot,
-                        control_time_s=1.0,
+                        control_time_s=1.0,  # 1 second intervals to check stop event
                         fps=fps,
                         teleoperate=True,
                         display_data=False  # We handle camera display ourselves
