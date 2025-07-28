@@ -13,6 +13,9 @@ import logging
 import sys
 import os
 
+# Import shared state
+import shared
+
 # Import existing services via bridge
 try:
     from ..services import RobotService, StreamService
@@ -54,8 +57,12 @@ def initialize_services():
         logger.info("Robot service initialized")
     
     if StreamService and not stream_service:
-        stream_service = StreamService()
-        logger.info("Stream service initialized")
+        socketio_instance = shared.get_socketio()
+        if socketio_instance:
+            stream_service = StreamService(socketio_instance)
+            logger.info("Stream service initialized")
+        else:
+            logger.warning("Socket.IO instance not available for StreamService")
 
 @router.on_event("startup")
 async def startup_event():
@@ -166,14 +173,14 @@ async def get_robot_status():
         
         # Get robot status
         status_data = {
-            "connected": robot_service.is_connected if robot_service else False,
+            "connected": robot_service.status["connected"] if robot_service else False,
             "mock_mode": True,  # Currently in mock mode
             "service_available": robot_service is not None,
             "stream_service": stream_service is not None
         }
         
         # Add hardware status if connected
-        if robot_service and robot_service.is_connected:
+        if robot_service and robot_service.status.get("connected", False):
             try:
                 status_data.update({
                     "hardware_status": "healthy",

@@ -39,6 +39,9 @@ from pathlib import Path
 backend_path = Path(__file__).parent
 sys.path.insert(0, str(backend_path))
 
+# Import shared state module
+import shared
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -137,6 +140,9 @@ sio = socketio.AsyncServer(
     logger=True,
     engineio_logger=False  # Reduce log noise
 )
+
+# Set the global Socket.IO instance for modules to use
+shared.set_socketio(sio)
 
 # Create Socket.IO ASGI app
 socket_app = socketio.ASGIApp(sio, app)
