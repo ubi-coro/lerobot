@@ -58,7 +58,7 @@ class ManipulatorRobotConfig(RobotConfig):
     # INTEGRATION POINT: Enhanced error monitoring configuration
     # Enable advanced Dynamixel motor error detection and recovery
     # Set to False to disable error monitoring (useful for debugging or compatibility)
-    enable_error_monitoring: bool = True
+    enable_error_monitoring: bool = False
 
     mock: bool = False
 

@@ -100,7 +100,9 @@ class RecordControlConfig(ControlConfig):
     # Peform DAgger like interventions to collect a new dataset
     interactive: bool = False
     # Map from event name to foot switches (dict with "device": int and "toggle": bool)
-    foot_switches: dict[str, dict[str, bool]] | None = field(default_factory=lambda: {})
+    foot_switches: dict[str, dict[str, bool]] | None = field(default_factory=lambda: {
+        "intervention": {"device": 5, "toggle": True}
+    })
     # Save a policy rollout or not
     save_eval: bool = True
 

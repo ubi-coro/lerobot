@@ -216,7 +216,7 @@ def init_keyboard_listener(foot_switches: Optional[dict] = None, interactive: bo
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
-            elif key == keyboard.Key.space and interactive:
+            elif (key == keyboard.Key.space and interactive) or (key.char == "b" and interactive):
                 if events["intervention"]:
                     print("Space key pressed. The policy is back in charge in charge...")
                     events["intervention"] = False
@@ -333,8 +333,8 @@ def control_loop(
         else:
             observation = robot.capture_observation()
             action = None
-            observation["task"] = [single_task]
-            observation["robot_type"] = [policy.robot_type] if hasattr(policy, "robot_type") else [""]
+            #observation["task"] = [single_task]
+            #observation["robot_type"] = [policy.robot_type] if hasattr(policy, "robot_type") else [""]
             if policy is not None:
                 pred_action = predict_action(
                     observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
