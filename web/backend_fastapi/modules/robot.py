@@ -53,8 +53,8 @@ def initialize_services():
     global robot_service, stream_service
     
     if RobotService and not robot_service:
-        robot_service = RobotService(use_mock=True)  # Start in mock mode
-        logger.info("Robot service initialized")
+        robot_service = RobotService(use_mock=False)  # Use real hardware
+        logger.info("Robot service initialized for real hardware")
     
     if StreamService and not stream_service:
         socketio_instance = shared.get_socketio()
@@ -92,22 +92,32 @@ async def connect_robot(request: ConnectRequest):
                 detail="Robot service not available. Check LeRobot installation."
             )
         
-        # Connect to robot with enhanced options
+        # Connect to robot with basic configuration
         result = robot_service.connect_aloha(
-            overrides=request.overrides or [],
-            leader_only=request.leader_only,
-            show_cameras=request.show_cameras
+            overrides=request.overrides or []
         )
         
-        logger.info("Robot connected successfully")
+        # Check if connection was successful
+        is_connected = result.get("connected", False)
+        error_message = result.get("error", None)
+        
+        if is_connected:
+            logger.info("Robot connected successfully")
+            message = "Robot connected successfully"
+        else:
+            logger.warning(f"Robot connection attempted but not fully connected: {error_message}")
+            message = "Robot connection attempted - running in mock mode"
+        
         return ApiResponse(
             status="success",
-            message="Robot connected successfully",
+            message=message,
             data={
-                "connected": True,
+                "connected": is_connected,
+                "mock_mode": not is_connected,
                 "leader_only": request.leader_only,
                 "cameras_enabled": request.show_cameras,
                 "overrides": request.overrides,
+                "error": error_message,
                 **result
             }
         )

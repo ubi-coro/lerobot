@@ -26,31 +26,31 @@
         </li>
         
         <li class="nav-item mb-1">
-          <router-link to="/record-dataset" class="nav-link text-light d-flex align-items-center" active-class="active">
+          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
             <i class="bi bi-record-circle me-2"></i>
             <span v-if="!sidebarCollapsed">Record Dataset</span>
-          </router-link>
+          </div>
         </li>
         
         <li class="nav-item mb-1">
-          <router-link to="/replay-dataset" class="nav-link text-light d-flex align-items-center" active-class="active">
+          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
             <i class="bi bi-play-circle me-2"></i>
             <span v-if="!sidebarCollapsed">Replay Dataset</span>
-          </router-link>
+          </div>
         </li>
         
         <li class="nav-item mb-1">
-          <router-link to="/training" class="nav-link text-light d-flex align-items-center" active-class="active">
+          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
             <i class="bi bi-cpu me-2"></i>
             <span v-if="!sidebarCollapsed">Training</span>
-          </router-link>
+          </div>
         </li>
         
         <li class="nav-item mb-1">
-          <router-link to="/calibration" class="nav-link text-light d-flex align-items-center" active-class="active">
+          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
             <i class="bi bi-tools me-2"></i>
             <span v-if="!sidebarCollapsed">Calibration</span>
-          </router-link>
+          </div>
         </li>
         
         <li class="nav-item mb-1">

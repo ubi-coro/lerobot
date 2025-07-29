@@ -19,6 +19,7 @@ import logging
 import asyncio
 import time
 import threading
+import os
 from enum import Enum
 import json
 
@@ -28,6 +29,15 @@ from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError,
 from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 
 logger = logging.getLogger(__name__)
+
+# Helper function to get absolute calibration directory
+def get_calibration_dir():
+    """Get absolute path to ALOHA calibration directory"""
+    # Get the project root (4 levels up from this file)
+    current_file = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file))))
+    calibration_dir = os.path.join(project_root, ".cache", "calibration", "aloha_lemgo_tabea")
+    return calibration_dir
 
 # Create router
 router = APIRouter(prefix="/api/aloha-teleoperation", tags=["aloha-teleoperation"])
@@ -58,12 +68,13 @@ class AlohaConfig(BaseModel):
     show_cameras: bool = Field(default=True, description="Show camera feeds")
     safety_limits: bool = Field(default=True, description="Enable safety limits")
     performance_monitoring: bool = Field(default=True, description="Enable performance monitoring")
-    calibration_dir: str = Field(default=".cache/calibration/aloha_lemgo_tabea", description="Calibration directory")
+    calibration_dir: str = Field(default_factory=get_calibration_dir, description="Calibration directory")
 
 class AlohaStartRequest(BaseModel):
     """Start ALOHA teleoperation request"""
     config: Optional[AlohaConfig] = None
     preset: Optional[PresetType] = None
+    config_overrides: Optional[Dict[str, Any]] = None
 
 # ALOHA Preset configurations (inspired by your system)
 ALOHA_PRESET_CONFIGURATIONS = {
@@ -78,7 +89,7 @@ ALOHA_PRESET_CONFIGURATIONS = {
     ),
     PresetType.NORMAL: AlohaConfig(
         fps=30,
-        max_relative_target=25.0,  # ALOHA default
+        max_relative_target=50.0,  # Increased from 25 to allow better control
         moving_time=0.1,  # Standard ALOHA timing
         operation_mode=OperationMode.BIMANUAL,
         show_cameras=True,
@@ -116,13 +127,13 @@ aloha_state = {
 def get_joint_positions_from_aloha(robot) -> Dict[str, float]:
     """
     Extract current joint positions from ALOHA robot and convert to a format
-    suitable for visualization (similar to LeLab's approach).
+    suitable for visualization (optimized for performance).
     
     Args:
         robot: The ALOHA robot instance
         
     Returns:
-        Dictionary mapping joint names to radian values
+        Dictionary mapping joint names to radian values, or empty dict if extraction fails
     """
     try:
         # Get current observation from ALOHA robot
@@ -130,46 +141,80 @@ def get_joint_positions_from_aloha(robot) -> Dict[str, float]:
         
         joint_positions = {}
         
-        # ALOHA has left and right arms, each with multiple joints
-        # Map ALOHA motor names to visualization joint names
-        aloha_joint_mapping = {
-            # Left arm
-            "left_waist": "left_base_rotation",
-            "left_shoulder": "left_shoulder_pitch", 
-            "left_elbow": "left_elbow_pitch",
-            "left_forearm_roll": "left_forearm_roll",
-            "left_wrist_angle": "left_wrist_pitch",
-            "left_wrist_rotate": "left_wrist_roll",
-            "left_gripper": "left_gripper",
-            
-            # Right arm  
-            "right_waist": "right_base_rotation",
-            "right_shoulder": "right_shoulder_pitch",
-            "right_elbow": "right_elbow_pitch", 
-            "right_forearm_roll": "right_forearm_roll",
-            "right_wrist_angle": "right_wrist_pitch",
-            "right_wrist_rotate": "right_wrist_roll", 
-            "right_gripper": "right_gripper"
-        }
+        # ALOHA observation structure - try different possible keys in order of preference
+        possible_keys = [
+            "observation.action",  # Most common format
+            "action",              # Direct action
+            "observation.state",   # State data
+            "state",              # Direct state
+        ]
         
-        # Extract joint positions from observation
-        for motor_key, joint_name in aloha_joint_mapping.items():
-            if motor_key in observation:
-                # ALOHA positions are typically already in radians
-                joint_positions[joint_name] = float(observation[motor_key])
+        action_tensor = None
+        found_key = None
+        
+        # Find the first available key with valid data
+        for key in possible_keys:
+            if key in observation:
+                candidate = observation[key]
+                # Check if it's a valid tensor/array with expected length
+                if hasattr(candidate, '__len__') and len(candidate) >= 14:  # At least 14 values needed
+                    action_tensor = candidate
+                    found_key = key
+                    break
+        
+        if action_tensor is not None:
+            # Extract joint positions based on ALOHA configuration
+            # ALOHA typically has: [left_arm_joints..., right_arm_joints...]
+            # Each arm usually has 7 joints: [waist, shoulder, elbow, forearm_roll, wrist_pitch, wrist_roll, gripper]
+            
+            if len(action_tensor) >= 14:  # Minimum for bimanual (7+7)
+                # Left arm (first 7 values)
+                joint_positions["left_base_rotation"] = float(action_tensor[0])      # waist/base
+                joint_positions["left_shoulder_pitch"] = float(action_tensor[1])     # shoulder
+                joint_positions["left_elbow_pitch"] = float(action_tensor[2])        # elbow  
+                joint_positions["left_forearm_roll"] = float(action_tensor[3])       # forearm_roll
+                joint_positions["left_wrist_pitch"] = float(action_tensor[4])        # wrist_pitch
+                joint_positions["left_wrist_roll"] = float(action_tensor[5])         # wrist_roll
+                joint_positions["left_gripper"] = float(action_tensor[6])            # gripper
+                
+                # Right arm (next 7 values) - only if we have enough data
+                if len(action_tensor) >= 14:
+                    joint_positions["right_base_rotation"] = float(action_tensor[7])     # waist/base
+                    joint_positions["right_shoulder_pitch"] = float(action_tensor[8])    # shoulder
+                    joint_positions["right_elbow_pitch"] = float(action_tensor[9])       # elbow
+                    joint_positions["right_forearm_roll"] = float(action_tensor[10])     # forearm_roll
+                    joint_positions["right_wrist_pitch"] = float(action_tensor[11])      # wrist_pitch
+                    joint_positions["right_wrist_roll"] = float(action_tensor[12])       # wrist_roll
+                    joint_positions["right_gripper"] = float(action_tensor[13])          # gripper
+                
+                # Log success only once per session
+                if not hasattr(get_joint_positions_from_aloha, '_logged_success'):
+                    logger.info(f"Successfully extracting joint positions from key: {found_key}, tensor length: {len(action_tensor)}")
+                    get_joint_positions_from_aloha._logged_success = True
+                    
             else:
-                logger.warning(f"Motor {motor_key} not found in observation")
-                joint_positions[joint_name] = 0.0
+                # Log unexpected length only once per session
+                if not hasattr(get_joint_positions_from_aloha, '_logged_length_warning'):
+                    logger.warning(f"ALOHA action tensor from {found_key} has unexpected length: {len(action_tensor)}")
+                    get_joint_positions_from_aloha._logged_length_warning = True
+        else:
+            # Log missing keys only once per session
+            if not hasattr(get_joint_positions_from_aloha, '_logged_missing_keys'):
+                logger.warning(f"No valid action/state tensor found in ALOHA observation. Available keys: {list(observation.keys())}")
+                get_joint_positions_from_aloha._logged_missing_keys = True
                 
         return joint_positions
         
     except Exception as e:
-        logger.error(f"Error getting ALOHA joint positions: {e}")
-        # Return zero positions as fallback
-        return {f"{arm}_{joint}": 0.0 
-                for arm in ["left", "right"] 
-                for joint in ["base_rotation", "shoulder_pitch", "elbow_pitch", 
-                             "forearm_roll", "wrist_pitch", "wrist_roll", "gripper"]}
+        # Only log errors occasionally to avoid spam
+        if not hasattr(get_joint_positions_from_aloha, '_error_count'):
+            get_joint_positions_from_aloha._error_count = 0
+        get_joint_positions_from_aloha._error_count += 1
+        
+        if get_joint_positions_from_aloha._error_count <= 3 or get_joint_positions_from_aloha._error_count % 50 == 0:
+            logger.error(f"Error getting ALOHA joint positions (#{get_joint_positions_from_aloha._error_count}): {e}")
+        
+        return {}  # Return empty dict instead of dummy data
 
 def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
     """
@@ -177,6 +222,8 @@ def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
     Similar to LeLab's configuration approach but using LeRobot's ALOHA config.
     """
     try:
+        logger.info(f"Creating ALOHA robot config for operation mode: {config.operation_mode}")
+        
         # Create base ALOHA configuration
         robot_config = AlohaRobotConfig(
             calibration_dir=config.calibration_dir,
@@ -185,20 +232,34 @@ def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
             mock=False  # Real hardware
         )
         
-        # Apply operation mode overrides
+        # CRITICAL: Apply operation mode overrides BEFORE robot creation
+        # This must happen before the robot is instantiated
+        original_leader_arms = robot_config.leader_arms.copy()
+        original_follower_arms = robot_config.follower_arms.copy()
+        
         if config.operation_mode == OperationMode.LEFT_ONLY:
-            # Disable right arm
-            robot_config.leader_arms = {"left": robot_config.leader_arms["left"]}
-            robot_config.follower_arms = {"left": robot_config.follower_arms["left"]}
+            # Keep only left arm configurations
+            robot_config.leader_arms = {k: v for k, v in original_leader_arms.items() if k == "left"}
+            robot_config.follower_arms = {k: v for k, v in original_follower_arms.items() if k == "left"}
+            logger.info(f"✅ LEFT-ONLY: Filtered arms from {list(original_leader_arms.keys())} to {list(robot_config.leader_arms.keys())}")
+            
         elif config.operation_mode == OperationMode.RIGHT_ONLY:
-            # Disable left arm  
-            robot_config.leader_arms = {"right": robot_config.leader_arms["right"]}
-            robot_config.follower_arms = {"right": robot_config.follower_arms["right"]}
-        # Bimanual uses both arms (default)
+            # Keep only right arm configurations  
+            robot_config.leader_arms = {k: v for k, v in original_leader_arms.items() if k == "right"}
+            robot_config.follower_arms = {k: v for k, v in original_follower_arms.items() if k == "right"}
+            logger.info(f"✅ RIGHT-ONLY: Filtered arms from {list(original_leader_arms.keys())} to {list(robot_config.leader_arms.keys())}")
+            
+        else:
+            # Bimanual - keep all arms
+            logger.info(f"✅ BIMANUAL: Keeping all arms {list(robot_config.leader_arms.keys())}")
         
         # Handle cameras based on config
         if not config.show_cameras:
+            # Completely disable cameras for ALOHA when not needed
             robot_config.cameras = {}
+            logger.info("🎥 Cameras disabled")
+        else:
+            logger.info("🎥 Cameras enabled")
             
         return robot_config
         
@@ -222,19 +283,66 @@ def aloha_teleoperation_worker(config: AlohaConfig, websocket_manager=None):
         robot.connect()
         aloha_state["robot"] = robot
         
+        # Verify single-arm configuration was applied correctly
+        if hasattr(robot, 'leader_arms') and hasattr(robot, 'follower_arms'):
+            active_leader_arms = list(robot.leader_arms.keys()) if robot.leader_arms else []
+            active_follower_arms = list(robot.follower_arms.keys()) if robot.follower_arms else []
+            logger.info(f"Active leader arms: {active_leader_arms}")
+            logger.info(f"Active follower arms: {active_follower_arms}")
+            
+            # Validate single-arm configuration
+            if config.operation_mode == OperationMode.LEFT_ONLY:
+                if "right" in active_leader_arms or "right" in active_follower_arms:
+                    logger.error("❌ RIGHT ARM still active in LEFT-ONLY mode! Configuration failed!")
+                    raise Exception("Single-arm configuration failed - right arm still active")
+                else:
+                    logger.info("✅ LEFT-ONLY mode confirmed - right arm disabled")
+            elif config.operation_mode == OperationMode.RIGHT_ONLY:
+                if "left" in active_leader_arms or "left" in active_follower_arms:
+                    logger.error("❌ LEFT ARM still active in RIGHT-ONLY mode! Configuration failed!")
+                    raise Exception("Single-arm configuration failed - left arm still active")
+                else:
+                    logger.info("✅ RIGHT-ONLY mode confirmed - left arm disabled")
+            else:
+                logger.info("✅ BIMANUAL mode - both arms active")
+        
         logger.info("ALOHA robot connected successfully")
         
-        # Teleoperation loop (inspired by LeLab but with your monitoring)
+        # Teleoperation loop (optimized for performance)
         loop_count = 0
         last_fps_time = time.time()
         last_broadcast_time = 0
-        broadcast_interval = 1.0 / 20  # 20 FPS for joint updates
+        # Reduce joint broadcast frequency to improve performance (10 FPS instead of 20)
+        broadcast_interval = 1.0 / 10  # 10 FPS for joint updates
+        joint_broadcast_count = 0  # Track failed broadcasts
+        
+        logger.info(f"Starting teleoperation loop with {config.operation_mode} mode at {config.fps} FPS")
         
         while not aloha_state["stop_event"].is_set():
             loop_start = time.time()
             
-            # Perform teleoperation step (LeRobot's method)
-            observation, action = robot.teleop_step(record_data=True)
+            try:
+                # Perform teleoperation step (LeRobot's method)
+                observation, action = robot.teleop_step(record_data=True)
+                
+            except Exception as e:
+                logger.error(f"Teleoperation step failed: {e}")
+                # Check if it's a communication error
+                if "Interrupted system call" in str(e) or "communication" in str(e).lower():
+                    logger.warning("Communication error detected, attempting to reconnect...")
+                    try:
+                        robot.disconnect()
+                        time.sleep(0.5)  # Brief pause
+                        robot.connect()
+                        logger.info("Reconnection successful")
+                        continue
+                    except Exception as reconnect_error:
+                        logger.error(f"Reconnection failed: {reconnect_error}")
+                        break
+                else:
+                    # Non-communication error, stop teleoperation
+                    logger.error("Non-recoverable error, stopping teleoperation")
+                    break
             
             # Update performance metrics
             loop_count += 1
@@ -246,26 +354,41 @@ def aloha_teleoperation_worker(config: AlohaConfig, websocket_manager=None):
                 loop_count = 0
                 last_fps_time = current_time
             
-            # Broadcast joint positions (LeLab-style real-time updates)
+            # Broadcast joint positions (optimized for performance)
             if websocket_manager and (current_time - last_broadcast_time) >= broadcast_interval:
                 try:
                     joint_positions = get_joint_positions_from_aloha(robot)
-                    joint_data = {
-                        "type": "aloha_joint_update",
-                        "joints": joint_positions,
-                        "timestamp": current_time,
-                        "fps": aloha_state["performance_metrics"]["average_fps"]
-                    }
                     
-                    # Broadcast to connected clients
-                    if hasattr(websocket_manager, 'broadcast_joint_data_sync'):
-                        websocket_manager.broadcast_joint_data_sync(joint_data)
+                    # Only broadcast if we have valid joint data
+                    if joint_positions:
+                        joint_data = {
+                            "type": "aloha_joint_update",
+                            "joints": joint_positions,
+                            "timestamp": current_time,
+                            "fps": aloha_state["performance_metrics"]["average_fps"],
+                            "operation_mode": config.operation_mode
+                        }
+                        
+                        # Broadcast to connected clients
+                        if hasattr(websocket_manager, 'broadcast_joint_data_sync'):
+                            websocket_manager.broadcast_joint_data_sync(joint_data)
+                        
+                        aloha_state["performance_metrics"]["last_joint_update"] = current_time
+                        joint_broadcast_count = 0  # Reset failed count on success
+                    else:
+                        joint_broadcast_count += 1
+                        # Don't spam logs with joint failures
+                        if joint_broadcast_count % 10 == 1:
+                            logger.debug(f"Joint extraction failed {joint_broadcast_count} times")
                     
-                    aloha_state["performance_metrics"]["last_joint_update"] = current_time
                     last_broadcast_time = current_time
-                    
+                        
                 except Exception as e:
-                    logger.error(f"Error broadcasting ALOHA joint data: {e}")
+                    joint_broadcast_count += 1
+                    # Only log every 10th error to reduce spam
+                    if joint_broadcast_count % 10 == 1:
+                        logger.warning(f"Error broadcasting ALOHA joint data (#{joint_broadcast_count}): {e}")
+                    last_broadcast_time = current_time
             
             # Calculate and limit loop timing
             loop_duration = time.time() - loop_start
@@ -311,8 +434,29 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
         
         # Determine configuration (your preset system)
         if request.preset:
-            config = ALOHA_PRESET_CONFIGURATIONS[request.preset]
+            config = ALOHA_PRESET_CONFIGURATIONS[request.preset].copy()
             logger.info(f"Using ALOHA preset configuration: {request.preset}")
+            
+            # Apply config overrides from frontend
+            if request.config_overrides:
+                logger.info(f"Applying config overrides: {request.config_overrides}")
+                for key, value in request.config_overrides.items():
+                    if hasattr(config, key):
+                        # Fix operation mode mapping from frontend to backend
+                        if key == "operation_mode":
+                            if value == "right_arm":
+                                value = "right_only"
+                            elif value == "left_arm":
+                                value = "left_only" 
+                            elif value == "bimanual":
+                                value = "bimanual"
+                            logger.info(f"Mapped operation_mode: {request.config_overrides[key]} -> {value}")
+                        
+                        setattr(config, key, value)
+                        logger.info(f"Override applied: {key} = {value}")
+                    else:
+                        logger.warning(f"Unknown config override: {key}")
+                        
         elif request.config:
             config = request.config
             logger.info("Using custom ALOHA configuration")
@@ -325,6 +469,12 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
         if config.max_relative_target and config.max_relative_target > 50:
             logger.warning("High relative target detected for ALOHA, enabling safety limits")
             config.safety_limits = True
+        
+        # Optimize FPS for single-arm operation to reduce lag
+        if config.operation_mode in [OperationMode.LEFT_ONLY, OperationMode.RIGHT_ONLY]:
+            if config.fps > 30:
+                logger.info(f"Reducing FPS from {config.fps} to 30 for single-arm operation to improve performance")
+                config.fps = 30
         
         # Start teleoperation
         aloha_state["active"] = True

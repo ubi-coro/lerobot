@@ -105,6 +105,9 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
     max_relative_target: int | None = 25
+    
+    # TEMPORARY: Disable error monitoring to debug leader-follower mismatch
+    enable_error_monitoring: bool = False
 
     # The duration of the velocity-based time profile
     # Higher values lead to smoother motions, but increase lag.

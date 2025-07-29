@@ -92,6 +92,7 @@
               <button 
                 :class="['env-btn', { active: teleoperationConfig.environment === 'sim' }]"
                 @click="teleoperationConfig.environment = 'sim'"
+                disabled
               >
                 <i class="bi bi-display"></i>
                 <span>Simulation</span>
@@ -211,19 +212,19 @@ const operationModes = ref([
   {
     value: 'bimanual',
     name: 'Bimanual',
-    icon: '🤝',
+    icon: '',
     description: 'Control both arms simultaneously'
   },
   {
     value: 'right_arm',
     name: 'Right Arm',
-    icon: '👉',
+    icon: '',
     description: 'Control right arm only'
   },
   {
     value: 'left_arm',
     name: 'Left Arm',
-    icon: '👈',
+    icon: '',
     description: 'Control left arm only'
   }
 ])
@@ -306,17 +307,41 @@ const startTeleoperation = async () => {
   try {
     const config = {
       operation_mode: teleoperationConfig.value.operationMode,
-      environment: teleoperationConfig.value.environment,
       show_cameras: teleoperationConfig.value.showCameras,
-      fps: 30
+      fps: 30,
+      safety_limits: true,
+      performance_monitoring: true
     }
     
-    const response = await robotApi.startTeleoperation(config)
+    // Use the dedicated teleoperation API with 'normal' preset as default
+    const response = await robotApi.startTeleoperation({ ...config, preset: 'normal' })
     
     isOperating.value = true
     operationStartTime.value = Date.now()
     
-    console.log('Teleoperation started:', response.data)
+    console.log('✅ Teleoperation started successfully:', response.data)
+    
+    // Add status polling to detect issues early
+    const statusCheckInterval = setInterval(async () => {
+      try {
+        const status = await robotApi.getTeleoperationStatus()
+        console.log('📊 Teleoperation status check:', status.data)
+        
+        // Check for error conditions
+        if (status.data.status === 'error' || status.data.active === false) {
+          console.error('⚠️ Teleoperation stopped unexpectedly:', status.data)
+          clearInterval(statusCheckInterval)
+          isOperating.value = false
+          connectionError.value = status.data.message || 'Teleoperation stopped unexpectedly'
+        }
+      } catch (error) {
+        console.error('❌ Status check failed:', error)
+        // Don't stop teleoperation just because status check failed
+      }
+    }, 2000) // Check every 2 seconds
+    
+    // Store interval for cleanup
+    window.teleoperationStatusInterval = statusCheckInterval
     
   } catch (error) {
     console.error('Failed to start teleoperation:', error)
@@ -328,12 +353,19 @@ const startTeleoperation = async () => {
 
 const stopTeleoperation = async () => {
   try {
+    // Clean up status checking
+    if (window.teleoperationStatusInterval) {
+      clearInterval(window.teleoperationStatusInterval)
+      window.teleoperationStatusInterval = null
+    }
+    
     await robotApi.stopTeleoperation()
     isOperating.value = false
     operationStartTime.value = null
     operationDuration.value = 0
+    console.log('✅ Teleoperation stopped successfully')
   } catch (error) {
-    console.error('Failed to stop teleoperation:', error)
+    console.error('❌ Failed to stop teleoperation:', error)
   }
 }
 
@@ -652,7 +684,7 @@ onUnmounted(() => {
   transition: all 0.2s ease;
 }
 
-.env-btn:hover {
+.env-btn:hover:not(:disabled) {
   border-color: #3b82f6;
   background: #eff6ff;
 }
@@ -660,6 +692,11 @@ onUnmounted(() => {
 .env-btn.active {
   border-color: #3b82f6;
   background: #dbeafe;
+}
+
+.env-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .env-btn i {

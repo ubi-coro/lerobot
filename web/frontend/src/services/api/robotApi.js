@@ -58,48 +58,106 @@ async function apiCall(endpoint, options = {}) {
 
 export default {
   // ============================================
-  // 🎮 TELEOPERATION CARD APIs
+  // 🎮 TELEOPERATION CARD APIs (FastAPI Backend)
   // ============================================
   
-  // Start teleoperation with LeRobot-compatible configuration
+  // Start teleoperation with ALOHA-compatible configuration
   startTeleoperation(config = {}) {
-    console.log('Calling startTeleoperation with LeRobot config:', config);
-    return apiCall('/teleoperate/start', {
-      method: 'POST',
-      body: {
-        // Map our config to LeRobot parameters
+    console.log('Starting ALOHA teleoperation with config:', config);
+    
+    // Call the FastAPI ALOHA teleoperation endpoint
+    const teleoperationBody = {
+      config: {
         fps: config.fps || 30,
-        show_cameras: config.show_cameras || true,  // LeRobot uses display_data, but we handle this in backend
-        // Remove non-LeRobot parameters
-        // operation_mode and environment are handled during connection, not teleoperation
+        operation_mode: config.operation_mode || 'bimanual',
+        show_cameras: config.show_cameras !== false,
+        safety_limits: config.safety_limits !== false,
+        performance_monitoring: true
       }
+    };
+    
+    // If a preset is specified, use it with custom overrides
+    if (config.preset) {
+      teleoperationBody.preset = config.preset;
+      // Keep the config as overrides instead of deleting it
+      teleoperationBody.config_overrides = teleoperationBody.config;
+      delete teleoperationBody.config;
+    }
+    
+    return fetch('/api/aloha-teleoperation/start', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(teleoperationBody)
+    }).then(async response => {
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || 'Failed to start teleoperation');
+      }
+      return { data };
     });
   },
 
   // Stop teleoperation
   stopTeleoperation() {
-    console.log('Calling stopTeleoperation...');
-    return apiCall('/teleoperate/stop', {
-      method: 'POST'
+    console.log('Stopping ALOHA teleoperation...');
+    return fetch('/api/aloha-teleoperation/stop', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }).then(async response => {
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || 'Failed to stop teleoperation');
+      }
+      return { data };
     });
   },
 
   // Get teleoperation status
   getTeleoperationStatus() {
-    return apiCall('/teleoperate/status');
-  },
-
-  // Get performance metrics
-  getPerformanceMetrics() {
-    return apiCall('/teleoperate/performance');
-  },
-
-  // Emergency stop
-  emergencyStop() {
-    console.log('Calling emergencyStop...');
-    return apiCall('/teleoperate/emergency-stop', {
-      method: 'POST'
+    return fetch('/api/aloha-teleoperation/status', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }).then(async response => {
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || 'Failed to get teleoperation status');
+      }
+      return { data };
     });
+  },
+
+  // Get available presets
+  getTeleoperationPresets() {
+    return fetch('/api/aloha-teleoperation/presets', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }).then(async response => {
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || 'Failed to get presets');
+      }
+      return { data };
+    });
+  },
+
+  // Start teleoperation with preset
+  startTeleoperationWithPreset(preset, overrides = {}) {
+    console.log('Starting teleoperation with preset:', preset);
+    return this.startTeleoperation({ preset, ...overrides });
+  },
+
+  // Emergency stop (placeholder - would need to be implemented in backend)
+  emergencyStop() {
+    console.log('Emergency stop called...');
+    return this.stopTeleoperation();
   },
 
   // ============================================
@@ -116,12 +174,17 @@ export default {
   connect(operationMode = 'bimanual', configSettings = {}) {
     console.log('Calling connect with operation mode:', operationMode);
     console.log('Calling connect with config settings:', configSettings);
+    
+    // Convert operation mode and config settings to the expected format
+    const connectRequest = {
+      overrides: configSettings.overrides || [],
+      leader_only: operationMode === 'leader_only' || configSettings.leader_only || false,
+      show_cameras: configSettings.show_cameras !== false // Default to true unless explicitly false
+    };
+    
     return apiCall('/connect', {
       method: 'POST',
-      body: { 
-        operation_mode: operationMode,
-        config_settings: configSettings 
-      }
+      body: connectRequest
     });
   },
 

@@ -272,7 +272,7 @@ const executeRecommendation = (rec) => {
 const loadSystemData = async () => {
   try {
     // Fetch dataset count
-    const datasetResponse = await fetch('/api/datasets/count')
+    const datasetResponse = await fetch('/api/dataset/count')
     if (datasetResponse.ok) {
       const data = await datasetResponse.json()
       datasetCount.value = data.count
