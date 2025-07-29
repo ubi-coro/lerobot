@@ -28,8 +28,8 @@
         >
           <div class="viz-info">
             <div class="viz-type">
-              <i :class="viz.type === 'html' ? 'bi bi-window' : 'bi bi-box'"></i>
-              {{ viz.type === 'html' ? 'HTML Visualizer' : '3D Rerun' }}
+              <i class="bi bi-window"></i>
+              HTML Visualizer
             </div>
             <div class="viz-target">{{ viz.target }}</div>
             <div class="viz-status">
@@ -62,18 +62,6 @@
           <li>Web-based sharing</li>
         </ul>
       </div>
-      
-      <div class="info-card">
-        <div class="card-icon">🎥</div>
-        <h4>3D Rerun Visualizer</h4>
-        <p>Advanced 3D visualization with real-time streaming capabilities. Ideal for spatial data analysis and robot pose visualization.</p>
-        <ul>
-          <li>3D robot pose visualization</li>
-          <li>Real-time data streaming</li>
-          <li>Multi-modal data fusion</li>
-          <li>Professional analysis tools</li>
-        </ul>
-      </div>
     </div>
 
     <!-- Dataset Selector Modal -->
@@ -102,9 +90,9 @@ const handleVisualizerLaunch = (launchInfo) => {
   
   // Add to running visualizers list
   const visualizer = {
-    type: launchInfo.type,
+    type: 'html',
     target: launchInfo.target,
-    port: launchInfo.type === 'html' ? 9090 : 9087,
+    port: 8080,
     startedAt: new Date()
   }
   
@@ -112,21 +100,16 @@ const handleVisualizerLaunch = (launchInfo) => {
 }
 
 const openVisualizer = (visualizer) => {
-  if (visualizer.type === 'html') {
-    datasetApi.openVisualizerWindow('html', visualizer.port)
-  } else {
-    // For Rerun, show instructions
-    alert(`3D Visualizer running!\n\nTo view:\n1. Install Rerun: pip install rerun-sdk\n2. Connect to: ws://localhost:${visualizer.port}\n3. Run: rerun ws://localhost:${visualizer.port}`)
-  }
+  datasetApi.openVisualizerWindow('html', visualizer.port)
 }
 
 const stopVisualizer = async (visualizer) => {
   try {
-    await datasetApi.stopVisualizer(visualizer.type)
+    await datasetApi.stopVisualizer('html')
     
     // Remove from running list
     const index = runningVisualizers.value.findIndex(
-      v => v.type === visualizer.type && v.target === visualizer.target
+      v => v.target === visualizer.target
     )
     if (index > -1) {
       runningVisualizers.value.splice(index, 1)
@@ -329,9 +312,8 @@ onUnmounted(() => {
 }
 
 .info-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 2rem;
+  display: flex;
+  justify-content: center;
 }
 
 .info-card {
@@ -340,6 +322,7 @@ onUnmounted(() => {
   border: 1px solid #e5e7eb;
   border-radius: 1rem;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+  max-width: 500px;
 }
 
 .card-icon {
@@ -393,7 +376,7 @@ onUnmounted(() => {
   padding: 2rem;
 }
 
-@media (max-width: 768px) {
+  @media (max-width: 768px) {
   .data-visualization-view {
     padding: 1rem;
   }
@@ -402,8 +385,8 @@ onUnmounted(() => {
     font-size: 2rem;
   }
   
-  .info-cards {
-    grid-template-columns: 1fr;
+  .info-card {
+    max-width: none;
   }
   
   .launch-btn {

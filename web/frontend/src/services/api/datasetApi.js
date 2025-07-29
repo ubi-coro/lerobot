@@ -1,4 +1,4 @@
-const API_BASE = '/api/datasets';
+const API_BASE = '/api/dataset';
 
 // Helper function for making API calls with fetch
 async function apiCall(endpoint, options = {}) {
@@ -150,23 +150,6 @@ export default {
     });
   },
 
-  // Launch Rerun 3D visualizer for specific repo  
-  launchRerunVisualizer(repoId, options = {}) {
-    console.log('Launching Rerun visualizer for repo:', repoId);
-    return apiCall('/visualization/launch', {
-      method: 'POST',
-      body: { 
-        repo_id: repoId,
-        visualizer_type: 'rerun',
-        episode_index: options.episodeIndex || 0,
-        mode: options.mode || 'local',
-        ws_port: options.wsPort || 9087,
-        local_files_only: options.localFilesOnly || false,
-        ...options
-      }
-    });
-  },
-
   // Launch visualizer for local dataset specifically
   launchLocalDatasetVisualizer(datasetPath, visualizerType = 'html', options = {}) {
     console.log('Launching local dataset visualizer:', datasetPath);
@@ -198,14 +181,12 @@ export default {
   },
 
   // Open visualizer URL in new window
-  openVisualizerWindow(visualizerType = 'html', port = 9090) {
-    const url = visualizerType === 'html' ? 
-      `http://localhost:${port}` : 
-      `http://localhost:9876`; // Rerun web interface
+  openVisualizerWindow(port = 9090) {
+    const url = `http://localhost:${port}`;
     
-    console.log('Opening visualizer window:', url);
+    console.log('Opening HTML visualizer window:', url);
     const windowFeatures = 'width=1400,height=900,scrollbars=yes,resizable=yes';
-    window.open(url, `lerobot_visualizer_${visualizerType}`, windowFeatures);
+    window.open(url, 'lerobot_html_visualizer', windowFeatures);
   },
 
   // Check if repo exists and is accessible
@@ -237,6 +218,36 @@ export default {
   deleteDataset(datasetId) {
     return apiCall(`/delete/${datasetId}`, {
       method: 'DELETE'
+    });
+  },
+
+  // ============================================
+  // 📊 HTML VISUALIZER APIs  
+  // ============================================
+
+  // Launch HTML visualizer with manual parameters
+  launchHtmlVisualizerCustom(params) {
+    console.log('Launching HTML visualizer with params:', params);
+    return fetch('/api/dataset/visualize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        repo_id: params.repoId,
+        root_path: params.rootPath,
+        episode_index: params.episodeIndex
+      })
+    }).then(response => response.json());
+  },
+
+  // Browse directory contents for folder selection
+  browseDirectory(path) {
+    return apiCall('/browse-directory', {
+      method: 'POST',
+      body: {
+        path: path
+      }
     });
   }
 };

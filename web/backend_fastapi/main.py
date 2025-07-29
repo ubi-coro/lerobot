@@ -68,6 +68,7 @@ try:
     from modules.monitoring import router as monitoring_router
     from modules.recording import router as recording_router
     from modules.configuration import router as configuration_router
+    from modules.dataset import router as dataset_router
     logger.info("✅ All modules imported successfully")
 except ImportError as e:
     logger.error(f"❌ Failed to import modules: {e}")
@@ -125,6 +126,7 @@ app.include_router(safety_router)
 app.include_router(monitoring_router)
 app.include_router(recording_router)
 app.include_router(configuration_router)
+app.include_router(dataset_router, prefix="/api/dataset", tags=["dataset"])
 
 # Socket.IO server with CORS support
 sio = socketio.AsyncServer(

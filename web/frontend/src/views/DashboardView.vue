@@ -71,7 +71,7 @@
       </div>
       
       <!-- Utility Operations (When Needed) -->
-      <div class="operation-card utility" @click="openCalibration">
+      <div class="operation-card utility" @click="openCalibration" disabled>
         <div class="card-icon">⚙️</div>
         <h3>Calibration</h3>
         <p>System setup & remote support</p>
@@ -152,6 +152,11 @@ const hasDatasets = computed(() => {
 
 const canStartTraining = computed(() => {
   return datasetCount.value >= 5
+})
+
+const canAccessCalibration = computed(() => {
+  // Calibration should always be available - it's needed especially when things aren't working
+  return true
 })
 
 // Operation handlers
