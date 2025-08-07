@@ -1,6 +1,8 @@
+import time
 from collections import defaultdict
 from contextlib import AbstractContextManager
-from typing import Dict, List, Mapping
+from dataclasses import dataclass
+from typing import Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -8,6 +10,19 @@ from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBusConf
 from lerobot.common.robot_devices.robots.configs import ManipulatorRobotConfig
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
+
+@dataclass
+class GelloConfig(ManipulatorRobotConfig):
+    robot_type: str = "ur"
+    calibration_dir: Optional[str] = None
+
+    def __post_init__(self):
+        if self.calibration_dir is None:
+            self.calibration_dir = f".cache/calibration/{self.type}"
+
+    @property
+    def type(self):
+        return f"{self.robot_type}-gello"
 
 class GelloLeader(AbstractContextManager):
     """
@@ -64,7 +79,7 @@ class GelloLeader(AbstractContextManager):
         offsets: Dict[str, Dict[str, float]] | None = None,
         mock: bool = False,
     ):
-        if robot_type not in self._DEFAULT_JOINT_SPEC:
+        if robot_type not in self._DEFAULT_GELLO_SPEC:
             raise ValueError(
                 f"Unknown `robot_type='{robot_type}'`.  "
                 "Add its motor specification to `_DEFAULT_JOINT_SPEC` first."
@@ -79,19 +94,20 @@ class GelloLeader(AbstractContextManager):
         # Build leader-only config.  Follower arms & cameras are empty.
         # -----------------------------------------------------------------
         leader_arm_cfgs: dict[str, DynamixelMotorsBusConfig] = {}
-        joint_spec = self._DEFAULT_JOINT_SPEC[robot_type]
+        joint_spec = self._DEFAULT_GELLO_SPEC[robot_type]
         for arm_name, port in leader_ports.items():
             leader_arm_cfgs[arm_name] = DynamixelMotorsBusConfig(
                 port=port,
                 motors=joint_spec,
             )
 
-        robot_cfg = ManipulatorRobotConfig(
+        robot_cfg = GelloConfig(
             leader_arms=leader_arm_cfgs,
             follower_arms={},               # <-- nothing to control
             cameras={},
             mock=mock,
             max_relative_target=None,       # only reading, no safety limiter needed
+            robot_type=robot_type
         )
 
         self._robot = ManipulatorRobot(robot_cfg)
@@ -99,7 +115,7 @@ class GelloLeader(AbstractContextManager):
     # ---------------------------------------------------------------------
     # 2.  Public API
     # ---------------------------------------------------------------------
-    def get_joint_states(self) -> Dict[str, Dict[str, float]]:
+    def get_joint_states(self) -> Dict[str, np.ndarray]:
         """
         Returns
         -------
@@ -107,7 +123,7 @@ class GelloLeader(AbstractContextManager):
             Nested mapping **arm → {joint_name: angle_deg}**.
             Offsets are already applied.
         """
-        states: dict[str, dict[str, float]] = {}
+        states: dict[str, np.ndarray] = {}
 
         for arm_name, bus in self._robot.leader_arms.items():
             raw: np.ndarray = bus.read("Present_Position")  # degrees by design
@@ -149,9 +165,13 @@ class GelloLeader(AbstractContextManager):
 
 if __name__ == "__main__":
     leader = GelloLeader(
-        leader_ports={"main": "ttyUSB0"}
+        leader_ports={"main": "/dev/ttyUSB0"}
     )
 
     leader.connect()
+
+    while True:
+        print(leader.get_joint_states())
+        time.sleep(0.1)
 
 
