@@ -356,33 +356,6 @@ async def startup_event():
     if service_bridge:
         logger.info("🔗 Service bridge available for backward compatibility")
     
-    # Initialize WebSocket manager for ALOHA teleoperation
-    try:
-        from modules.aloha_teleoperation import set_websocket_manager
-        
-        # Create a simple WebSocket manager
-        class WebSocketManager:
-            def __init__(self, sio_instance):
-                self.sio = sio_instance
-                
-            def broadcast_joint_data_sync(self, data):
-                """Synchronous broadcast for threading compatibility"""
-                try:
-                    # Use asyncio to run the async broadcast
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self.sio.emit('aloha_joint_update', data))
-                    loop.close()
-                except Exception as e:
-                    logger.error(f"Error broadcasting ALOHA joint data: {e}")
-                    
-        websocket_manager = WebSocketManager(sio)
-        set_websocket_manager(websocket_manager)
-        logger.info("🤖 ALOHA WebSocket manager initialized for real-time updates")
-        
-    except ImportError as e:
-        logger.warning(f"⚠️ ALOHA WebSocket manager not available: {e}")
-    
     logger.info("✅ Backend initialization complete")
 
 @app.on_event("shutdown")

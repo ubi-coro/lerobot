@@ -291,6 +291,23 @@ class IntelRealSenseCamera:
         else:
             import pyrealsense2 as rs
 
+        # added by copilot to handle hardware reset
+        if self.force_hardware_reset:
+            logging.info(f"Attempting hardware reset for camera {self.serial_number}...")
+            ctx = rs.context()
+            devices = ctx.query_devices()
+            found = False
+            for dev in devices:
+                if dev.get_info(rs.camera_info.serial_number) == str(self.serial_number):
+                    logging.info(f"Found device {self.serial_number}, performing hardware reset.")
+                    dev.hardware_reset()
+                    found = True
+                    # Wait for the device to come back online after reset
+                    time.sleep(5)
+                    break
+            if not found:
+                logging.warning(f"Could not find device {self.serial_number} to perform hardware reset.")
+
         config = rs.config()
         config.enable_device(str(self.serial_number))
 

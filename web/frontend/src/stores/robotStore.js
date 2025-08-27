@@ -8,9 +8,11 @@ export const useRobotStore = defineStore('robot', {
     status: {
       connected: false,
       available_arms: [],
-      cameras: [],
-      error: null // Use this for error state instead of separate properties
+  cameras: [],
+  mode: null // added default mode so components relying on it don't error
     },
+    errorMessage: '',
+    hasError: false,
     socket: null,
     cameraStreams: {},
     statusPollingTimer: null,
@@ -37,8 +39,8 @@ export const useRobotStore = defineStore('robot', {
   }),
 
   getters: {
-    isConnected: (state) => state.status.connected,
-    isTeleoperating: (state) => state.status.mode === 'teleoperating',
+  isConnected: (state) => !!state.status.connected,
+  isTeleoperating: (state) => state.status.mode === 'teleoperating',
     hasError: (state) => !!state.status.error,
     errorMessage: (state) => state.status.error,
     availableCameras: (state) => state.status.cameras || []
@@ -48,59 +50,20 @@ export const useRobotStore = defineStore('robot', {
     // Initialize socket connection
     initSocket() {
       if (!this.socket) {
-        // Import socket.io-client
-        this.socket = io('http://localhost:5000'); // Explicitly connect to backend port
+        this.socket = io();
 
         this.socket.on('connect', () => {
-          console.log('Socket connected to backend');
+          console.log('Socket connected');
         });
 
         this.socket.on('disconnect', () => {
-          console.log('Socket disconnected from backend');
+          console.log('Socket disconnected');
         });
 
         this.socket.on('camera_frame', (data) => {
           // Handle camera frame data
-          console.log(`Received camera frame for ${data.camera_id}`);
           this.cameraStreams[data.camera_id] = data.frame;
         });
-
-        this.socket.on('connect_error', (error) => {
-          console.error('Socket connection error:', error);
-        });
-      }
-    },
-
-    // Start camera streams for available cameras
-    startCameraStreams(fps = 10) {
-      if (!this.socket) {
-        this.initSocket();
-      }
-
-      // Start streams for all available cameras
-      this.status.cameras.forEach(camera => {
-        const cameraId = camera.name || camera.id || camera;
-        console.log(`Starting camera stream for ${cameraId}`);
-        this.socket.emit('start_camera_stream', {
-          camera_id: cameraId,
-          fps: fps
-        });
-      });
-    },
-
-    // Stop camera streams
-    stopCameraStreams() {
-      if (this.socket) {
-        this.status.cameras.forEach(camera => {
-          const cameraId = camera.name || camera.id || camera;
-          console.log(`Stopping camera stream for ${cameraId}`);
-          this.socket.emit('stop_camera_stream', {
-            camera_id: cameraId
-          });
-        });
-        
-        // Clear camera streams
-        this.cameraStreams = {};
       }
     },
 
@@ -116,55 +79,35 @@ export const useRobotStore = defineStore('robot', {
           console.log('Configs stored:', this.configs);
         } else {
           console.error('Invalid response format:', response);
-          this.status.error = 'Invalid API response format';
+          this.hasError = true;
+          this.errorMessage = 'Invalid API response format';
         }
       } catch (error) {
         console.error('Error fetching robot configurations:', error);
-        this.status.error = error.message || 'Failed to load robot configurations';
+        this.hasError = true;
+        this.errorMessage = error.message || 'Failed to load robot configurations';
       }
     },
 
-    // Connect to robot with retry logic
-    async connectRobot(operationMode, configSettings = {}) {
-      const maxRetries = 3;
-      let retryCount = 0;
-      
-      while (retryCount < maxRetries) {
-        try {
-          this.status.error = null;
-          
-          console.log(`Connection attempt ${retryCount + 1}/${maxRetries}`);
-          const response = await robotApi.connect(operationMode, configSettings);
+    // Connect to robot
+    async connectRobot(robotConfig, robotOverrides = null) {
+      try {
+        this.hasError = false;
+        this.errorMessage = '';
 
-          if (response.data.status === 'success') {
-            this.status = { ...this.status, ...response.data.data };
-            
-            // Clear error state on successful connection
-            this.status.error = null;
-            
-            console.log('Robot connected successfully');
-            
-            // Start status polling to get real-time updates including errors
-            this.startStatusPolling(2000); // Poll every 2 seconds
-            return; // Success, exit retry loop
-          } else {
-            throw new Error(response.data.message || 'Connection failed');
-          }
-        } catch (error) {
-          console.error(`Connection attempt ${retryCount + 1} failed:`, error);
-          retryCount++;
-          
-          if (retryCount >= maxRetries) {
-            // Final failure
-            this.status.error = `Connection failed after ${maxRetries} attempts: ${error.response?.data?.message || error.message}`;
-            break;
-          } else {
-            // Wait before retry (exponential backoff)
-            const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-            console.log(`Waiting ${waitTime}ms before retry...`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-          }
+        const response = await robotApi.connect(robotConfig, robotOverrides);
+
+        if (response.data.status === 'success') {
+          this.status = { ...this.status, ...response.data.data };
+          console.log('Robot connected successfully');
+        } else {
+          this.hasError = true;
+          this.errorMessage = response.data.message || 'Connection failed';
         }
+      } catch (error) {
+        console.error('Error connecting to robot:', error);
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Connection failed';
       }
     },
 
@@ -178,40 +121,30 @@ export const useRobotStore = defineStore('robot', {
             connected: false,
             available_arms: [],
             cameras: [],
-            mode: null,
-            error: null // Clear error on disconnect
+            mode: null
           };
-          
           console.log('Robot disconnected successfully');
         }
       } catch (error) {
         console.error('Error disconnecting robot:', error);
-        this.status.error = error.response?.data?.message || 'Disconnect failed';
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Disconnect failed';
       }
     },
 
     // Start teleoperation
-    async startTeleoperation(config = {}) {
+    async startTeleoperation(fps = 30) {
       try {
-        // Initialize socket connection if not already done
-        this.initSocket();
-        
-        const response = await robotApi.startTeleoperation(config);
+        const response = await robotApi.startTeleoperation(fps, false);
 
         if (response.data.status === 'success') {
           this.status.mode = 'teleoperating';
-          
-          // Start camera streams if cameras are enabled in config
-          if (config.show_cameras && this.status.cameras && this.status.cameras.length > 0) {
-            console.log('Starting camera streams for teleoperation');
-            this.startCameraStreams(config.fps || 30);
-          }
-          
           console.log('Teleoperation started');
         }
       } catch (error) {
         console.error('Error starting teleoperation:', error);
-        this.status.error = error.response?.data?.message || 'Failed to start teleoperation';
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to start teleoperation';
       }
     },
 
@@ -222,15 +155,12 @@ export const useRobotStore = defineStore('robot', {
 
         if (response.data.status === 'success') {
           this.status.mode = null;
-          
-          // Stop camera streams
-          this.stopCameraStreams();
-          
           console.log('Teleoperation stopped');
         }
       } catch (error) {
         console.error('Error stopping teleoperation:', error);
-        this.status.error = error.response?.data?.message || 'Failed to stop teleoperation';
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
       }
     },
 
@@ -240,21 +170,7 @@ export const useRobotStore = defineStore('robot', {
         const response = await robotApi.getStatus();
 
         if (response.data.status === 'success') {
-          const statusData = response.data.data;
-          
-          // Update status fields
-          this.status = {
-            ...this.status,
-            connected: statusData.connected,
-            available_arms: statusData.available_arms || [],
-            cameras: statusData.cameras || [],
-            mode: statusData.mode
-          };
-          
-          // Only update error from backend if we don't currently have an error set
-          if (statusData.error && !this.status.error) {
-            this.status.error = statusData.error;
-          }
+          this.status = { ...this.status, ...response.data.data };
         }
       } catch (error) {
         console.error('Error fetching robot status:', error);
@@ -262,7 +178,7 @@ export const useRobotStore = defineStore('robot', {
       }
     },
 
-    // Alias for compatibility
+    // Backwards-compatible alias used by several views (e.g. Dashboard, Teleoperation)
     async updateStatus() {
       return this.fetchRobotStatus();
     },
@@ -299,20 +215,23 @@ export const useRobotStore = defineStore('robot', {
       try {
         const finalConfig = config || this.teleoperationConfig;
         
-        // Initialize socket connection if not already done
-        this.initSocket();
-        
-        // Use the unified teleoperation API
-        const response = await robotApi.startTeleoperation(finalConfig);
+        // Prepare configuration for backend
+        const teleoperationParams = {
+          fps: finalConfig.fps,
+          show_cameras: finalConfig.showCameras,
+          max_relative_target: finalConfig.maxRelativeTarget,
+          operation_mode: finalConfig.operationMode,
+          enable_safe_shutdown: finalConfig.enableSafeShutdown,
+          moving_time: finalConfig.movingTime,
+          teleop_time_limit: finalConfig.teleopTimeLimit,
+          performance_monitoring: finalConfig.performanceMonitoring,
+          debug_level: finalConfig.debugLevel
+        };
+
+        const response = await robotApi.startTeleoperationAdvanced(teleoperationParams);
 
         if (response.data.status === 'success') {
           this.status.mode = 'teleoperating';
-          
-          // Start camera streams if cameras are enabled
-          if (finalConfig.showCameras && this.status.cameras && this.status.cameras.length > 0) {
-            console.log('Starting camera streams for teleoperation');
-            this.startCameraStreams(finalConfig.fps || 10);
-          }
           
           // Start performance monitoring if enabled
           if (finalConfig.performanceMonitoring) {
@@ -321,11 +240,13 @@ export const useRobotStore = defineStore('robot', {
           
           console.log('Advanced teleoperation started with config:', finalConfig);
         } else {
-          this.status.error = response.data.message || 'Failed to start teleoperation';
+          this.hasError = true;
+          this.errorMessage = response.data.message || 'Failed to start teleoperation';
         }
       } catch (error) {
         console.error('Error starting advanced teleoperation:', error);
-        this.status.error = error.response?.data?.message || 'Failed to start teleoperation';
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to start teleoperation';
       }
     },
 
@@ -336,16 +257,13 @@ export const useRobotStore = defineStore('robot', {
 
         if (response.data.status === 'success') {
           this.status.mode = null;
-          
-          // Stop camera streams
-          this.stopCameraStreams();
-          
           this.stopPerformanceMonitoring();
           console.log('Advanced teleoperation stopped');
         }
       } catch (error) {
         console.error('Error stopping teleoperation:', error);
-        this.status.error = error.response?.data?.message || 'Failed to stop teleoperation';
+        this.hasError = true;
+        this.errorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
       }
     },
 
@@ -378,78 +296,12 @@ export const useRobotStore = defineStore('robot', {
       }
     },
 
-    // Enhanced emergency stop functionality (FastTrack Step 1.2)
-    async emergencyStop() {
-      console.log('🚨 Emergency stop initiated');
-      
-      try {
-        // 1. Immediately stop teleoperation via API with timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
-        
-        const response = await fetch('/api/robot/teleoperate/emergency-stop', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          throw new Error(`Emergency stop API failed: ${response.status}`);
-        }
-
-        console.log('✅ Emergency stop API call successful');
-        
-      } catch (error) {
-        console.error('❌ Emergency stop API failed:', error);
-        // Continue with local cleanup even if API fails
+    // Emergency stop functionality
+    emergencyStop() {
+      if (this.status.mode === 'teleoperating') {
+        this.stopTeleoperationAdvanced();
+        console.log('Emergency stop activated');
       }
-
-      try {
-        // 2. Force local state cleanup regardless of API response
-        this.status.mode = null;
-        this.status.error = null; // Clear any existing errors
-        
-        // 3. Stop camera streams
-        this.stopCameraStreams();
-        
-        // 4. Stop performance monitoring
-        this.stopPerformanceMonitoring();
-        
-        // 5. Stop status polling to prevent conflicts
-        this.stopStatusPolling();
-        
-        // 6. Clear any timers or intervals
-        if (this.performanceTimer) {
-          clearInterval(this.performanceTimer);
-          this.performanceTimer = null;
-        }
-        
-        // 7. Emit emergency stop event via socket
-        if (this.socket && this.socket.connected) {
-          this.socket.emit('emergency_stop');
-          // Disconnect socket to ensure clean state
-          this.socket.disconnect();
-          this.socket = null;
-        }
-        
-        console.log('✅ Emergency stop local cleanup completed');
-        
-      } catch (localError) {
-        console.error('❌ Emergency stop local cleanup failed:', localError);
-      }
-      
-      // 8. Always log completion and ensure UI is updated
-      console.log('🚨 Emergency stop procedure completed');
-      
-      // 9. Force Vue reactivity update
-      this.$patch((state) => {
-        state.status.mode = null;
-        state.status.connected = false;
-      });
     }
   }
 });

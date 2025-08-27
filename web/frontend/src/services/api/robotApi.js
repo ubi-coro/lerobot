@@ -71,6 +71,7 @@ export default {
         fps: config.fps || 30,
         operation_mode: config.operation_mode || 'bimanual',
         show_cameras: config.show_cameras !== false,
+        display_data: config.display_data || false,  // Add display_data parameter
         safety_limits: config.safety_limits !== false,
         performance_monitoring: true
       }

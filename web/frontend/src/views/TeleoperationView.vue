@@ -100,17 +100,30 @@
             </div>
           </div>
 
-          <!-- Camera Display -->
+          <!-- Camera Display Options -->
           <div class="config-group">
-            <label>
-              <input 
-                type="checkbox" 
-                v-model="teleoperationConfig.showCameras"
-                class="config-checkbox"
-              />
-              Show Camera Feeds
-            </label>
-            <small>Display real-time camera streams during teleoperation</small>
+            <label>Display Options</label>
+            <div class="display-options">
+              <label class="checkbox-label">
+                <input 
+                  type="checkbox" 
+                  v-model="teleoperationConfig.showCameras"
+                  class="config-checkbox"
+                />
+                Show Camera Feeds
+                <small>Display camera streams on web interface</small>
+              </label>
+              
+              <label class="checkbox-label">
+                <input 
+                  type="checkbox" 
+                  v-model="teleoperationConfig.displayData"
+                  class="config-checkbox"
+                />
+                Show External Display
+                <small>Open LeRobot's display window with cameras and telemetry</small>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -154,9 +167,22 @@
           <span class="status-value">{{ teleoperationConfig.showCameras ? 'Active' : 'Disabled' }}</span>
         </div>
         <div class="status-item">
+          <span class="status-label">External Display</span>
+          <span class="status-value">{{ teleoperationConfig.displayData ? 'Active' : 'Disabled' }}</span>
+        </div>
+        <div class="status-item">
           <span class="status-label">Duration</span>
           <span class="status-value">{{ formatDuration(operationDuration) }}</span>
         </div>
+      </div>
+    </div>
+
+    <!-- Display Data Info (if enabled) -->
+    <div v-if="isOperating && teleoperationConfig.displayData" class="display-data-info">
+      <div class="alert alert-info">
+        <i class="bi bi-window me-2"></i>
+        <strong>External Display Active:</strong> LeRobot's display window should be open showing real-time camera feeds and telemetry data.
+        If you don't see it, check your system for a new rerun window.
       </div>
     </div>
 
@@ -184,13 +210,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRobotStore } from '@/stores/robotStore'
 import robotApi from '@/services/api/robotApi'
 
 const router = useRouter()
 const robotStore = useRobotStore()
+// Removed storeToRefs usage (not imported) – we access reactive store state directly.
 
 // State
 const isConnecting = ref(false)
@@ -204,7 +231,21 @@ const operationDuration = ref(0)
 const teleoperationConfig = ref({
   operationMode: 'bimanual',
   environment: 'real',
-  showCameras: true
+  showCameras: true,
+  displayData: false  // External LeRobot display window
+})
+
+// Watch for changes in display options to make them mutually exclusive
+watch(() => teleoperationConfig.value.showCameras, (newValue) => {
+  if (newValue) {
+    teleoperationConfig.value.displayData = false
+  }
+})
+
+watch(() => teleoperationConfig.value.displayData, (newValue) => {
+  if (newValue) {
+    teleoperationConfig.value.showCameras = false
+  }
 })
 
 // Available operation modes
@@ -308,6 +349,7 @@ const startTeleoperation = async () => {
     const config = {
       operation_mode: teleoperationConfig.value.operationMode,
       show_cameras: teleoperationConfig.value.showCameras,
+      display_data: teleoperationConfig.value.displayData,  // Add display_data parameter
       fps: 30,
       safety_limits: true,
       performance_monitoring: true
@@ -703,6 +745,36 @@ onUnmounted(() => {
   font-size: 1.5rem;
 }
 
+/* Display Options */
+.display-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.checkbox-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  cursor: pointer;
+  padding: 0.75rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.checkbox-label:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.checkbox-label small {
+  color: #6b7280;
+  font-size: 0.85rem;
+  margin-left: 1.75rem;
+}
+
 /* Checkbox */
 .config-checkbox {
   margin-right: 0.5rem;
@@ -769,6 +841,23 @@ onUnmounted(() => {
 .camera-section h3 {
   margin: 0 0 1.5rem 0;
   color: #1f2937;
+}
+
+/* Display Data Info */
+.display-data-info {
+  margin-bottom: 2rem;
+}
+
+.alert {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid transparent;
+}
+
+.alert-info {
+  background-color: #e0f2fe;
+  border-color: #0288d1;
+  color: #01579b;
 }
 
 .camera-grid {
