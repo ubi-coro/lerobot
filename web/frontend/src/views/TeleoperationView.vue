@@ -100,18 +100,19 @@
             </div>
           </div>
 
-          <!-- Camera Display Options -->
+          <!-- Camera Display Options (camera feeds temporarily disabled) -->
           <div class="config-group">
             <label>Display Options</label>
             <div class="display-options">
-              <label class="checkbox-label">
+              <label class="checkbox-label" style="opacity:0.6;cursor:not-allowed;">
                 <input 
                   type="checkbox" 
                   v-model="teleoperationConfig.showCameras"
                   class="config-checkbox"
+                  disabled
                 />
-                Show Camera Feeds
-                <small>Display camera streams on web interface</small>
+                Show Camera Feeds (disabled)
+                <small>Camera streaming temporarily disabled</small>
               </label>
               
               <label class="checkbox-label">
@@ -186,24 +187,11 @@
       </div>
     </div>
 
-    <!-- Camera Feeds (if enabled) -->
-    <div v-if="isOperating && teleoperationConfig.showCameras" class="camera-section">
-      <h3><i class="bi bi-camera-video me-2"></i>Camera Feeds</h3>
-      <div class="camera-grid">
-        <div 
-          v-for="camera in availableCameras" 
-          :key="camera.id"
-          class="camera-feed"
-        >
-          <div class="camera-header">{{ camera.name }}</div>
-          <div class="camera-stream">
-            <!-- Camera stream placeholder - will be replaced with actual stream -->
-            <div class="stream-placeholder">
-              <i class="bi bi-camera-video"></i>
-              <span>{{ camera.name }} Stream</span>
-            </div>
-          </div>
-        </div>
+    <!-- Camera Feeds Disabled Notice -->
+    <div v-if="isOperating" class="camera-section" style="opacity:0.6;">
+      <h3><i class="bi bi-camera-video me-2"></i>Camera Feeds (disabled)</h3>
+      <div class="alert alert-info" style="margin:0;">
+        Camera streaming is currently disabled.
       </div>
     </div>
   </div>
@@ -231,7 +219,7 @@ const operationDuration = ref(0)
 const teleoperationConfig = ref({
   operationMode: 'bimanual',
   environment: 'real',
-  showCameras: true,
+  showCameras: false, // disabled by default
   displayData: false  // External LeRobot display window
 })
 
@@ -270,12 +258,19 @@ const operationModes = ref([
   }
 ])
 
-// Mock camera data (replace with actual camera detection)
-const availableCameras = ref([
+// Cameras: prefer those reported by backend status; fallback to common ALOHA camera IDs
+const fallbackCameras = [
   { id: 'cam_high', name: 'Top View' },
   { id: 'cam_right_wrist', name: 'Right Wrist' },
-  { id: 'cam_left_wrist', name: 'Left Wrist' }
-])
+  { id: 'cam_left_wrist', name: 'Left Wrist' },
+  { id: 'cam_low', name: 'Low View' }
+]
+const availableCameras = computed(() => {
+  const cams = robotStore.status.cameras || []
+  if (!cams.length) return fallbackCameras
+  // Normalize possible string list into objects
+  return cams.map(c => (typeof c === 'string' ? { id: c, name: c } : c))
+})
 
 // Computed properties
 const connectionStatusClass = computed(() => {
@@ -459,21 +454,17 @@ const stopDurationTracking = () => {
 
 // Lifecycle
 onMounted(() => {
+  // Ensure socket connected for receiving camera_frame events
+  robotStore.initSocket()
   robotStore.updateStatus()
   startDurationTracking()
-  
-  // Add keyboard emergency stop (Space key)
   const handleKeyPress = (event) => {
     if (event.code === 'Space' && isOperating.value) {
       event.preventDefault()
-      console.log('Emergency stop triggered by Space key')
       emergencyStop()
     }
   }
-  
   document.addEventListener('keydown', handleKeyPress)
-  
-  // Cleanup function
   onUnmounted(() => {
     document.removeEventListener('keydown', handleKeyPress)
     stopDurationTracking()

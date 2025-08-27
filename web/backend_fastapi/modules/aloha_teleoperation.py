@@ -28,6 +28,7 @@ from lerobot.common.robot_devices.robots.configs import AlohaRobotConfig
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.common.robot_devices.control_utils import control_loop, ControlEvents
+from . import camera_streaming
 from lerobot.scripts.control_robot import _init_rerun
 from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig
 
@@ -202,6 +203,21 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
         # Store events so stop endpoint can signal immediate exit
         aloha_state["events"] = events
 
+        # Start camera streams if requested in config (treat show_cameras purely as streaming toggle)
+        try:
+            if config.show_cameras:
+                # Default camera streaming fps: min(control loop fps, 12)
+                cam_fps = min(config.fps, 12)
+                try:
+                    cam_keys = list(getattr(robot, 'cameras', {}).keys())
+                    logger.info(f"Camera devices available on robot: {cam_keys}")
+                except Exception:
+                    logger.info("No robot.cameras introspection available")
+                camera_streaming.start_streams(robot, fps=cam_fps)
+                logger.info(f"Started camera streaming (fps={cam_fps}) for cameras: {camera_streaming.get_active_streams()}")
+        except Exception as e:
+            logger.warning(f"Failed to start camera streaming: {e}")
+
         # 3. Run LeRobot's main control loop in short segments to allow responsive stop
         aloha_state["stage"] = "running"
         logger.info(f"Starting segmented teleoperation loop (fps={control_cfg.fps}, display_data={control_cfg.display_data})")
@@ -223,6 +239,12 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
         logger.error(f"Error in ALOHA teleoperation worker: {e}", exc_info=True)
     finally:
         aloha_state["stage"] = "stopping"
+        # Stop camera streams before potentially disconnecting
+        try:
+            camera_streaming.stop_all_streams()
+        except Exception as e:
+            logger.debug(f"Error stopping camera streams: {e}")
+
         # Only disconnect hardware if we created it here
         if 'robot' in locals() and aloha_state.get("owned_robot") and robot.is_connected:
             try:

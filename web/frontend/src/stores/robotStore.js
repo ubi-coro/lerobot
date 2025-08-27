@@ -49,22 +49,56 @@ export const useRobotStore = defineStore('robot', {
   actions: {
     // Initialize socket connection
     initSocket() {
-      if (!this.socket) {
-        this.socket = io();
+      if (this.socket) return;
+      const envUrl = import.meta?.env?.VITE_BACKEND_URL;
+      let backendUrl = envUrl || window.location.origin;
+      if (!envUrl && window.location.port === '5173') backendUrl = 'http://localhost:8000';
+      console.log(`[robotStore] Initializing Socket.IO -> ${backendUrl}`);
 
-        this.socket.on('connect', () => {
-          console.log('Socket connected');
-        });
+      const connectWithOptions = (opts, label) => {
+        try {
+          console.log(`[robotStore] Attempting Socket.IO connect (${label})`);
+          this.socket = io(backendUrl, opts);
+        } catch (e) {
+          console.error('[robotStore] Socket creation failed:', e);
+        }
+      };
 
-        this.socket.on('disconnect', () => {
-          console.log('Socket disconnected');
-        });
+      // First attempt: default (allows polling then upgrade)
+      connectWithOptions({ path: '/socket.io', transports: ['polling','websocket'], withCredentials: false, timeout: 8000 }, 'polling+websocket');
+      if (!this.socket) return;
 
-        this.socket.on('camera_frame', (data) => {
-          // Handle camera frame data
-          this.cameraStreams[data.camera_id] = data.frame;
-        });
-      }
+      let retried = false;
+      this.socket.on('connect', () => {
+        console.log('[robotStore] Socket connected to backend (id=' + this.socket.id + ')');
+      });
+      this.socket.on('disconnect', (reason) => {
+        console.log('[robotStore] Socket disconnected:', reason);
+      });
+      this.socket.on('connect_error', (err) => {
+        console.error('[robotStore] Socket connection error:', err.message);
+        if (!retried) {
+          retried = true;
+          // Retry forcing new and allowing all transports
+            console.log('[robotStore] Retrying socket connection with forceNew');
+            this.socket = null;
+            connectWithOptions({ path: '/socket.io', transports: ['polling','websocket'], forceNew: true, reconnectionAttempts: 2, timeout: 10000 }, 'retry');
+        }
+      });
+      this.socket.on('error', (err) => {
+        console.error('[robotStore] Socket error event:', err);
+      });
+      this.socket.on('camera_frame', (data) => {
+        if (!data || !data.camera_id) return;
+        if (!this.cameraStreams[data.camera_id]) console.log(`[robotStore] First frame for ${data.camera_id}`);
+        this.cameraStreams[data.camera_id] = data.frame;
+      });
+      this.socket.on('camera_list', (data) => {
+        if (data && Array.isArray(data.cameras)) {
+          this.status.cameras = data.cameras;
+          console.log('[robotStore] Updated camera list from event:', data.cameras);
+        }
+      });
     },
 
     // Fetch robot configurations
