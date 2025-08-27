@@ -15,7 +15,7 @@ Features:
 
 Modules:
 - robot.py: Robot connection and hardware management
-- teleoperation.py: Advanced teleoperation with presets
+- aloha_teleoperation.py: ALOHA teleoperation (LeRobot native)
 - safety.py: Enhanced emergency stop and safety systems
 - monitoring.py: Performance tracking and analytics
 - recording.py: Dataset management and episode recording
@@ -61,7 +61,6 @@ except ImportError as e:
 # Import module routers
 try:
     from modules.robot import router as robot_router
-    from modules.teleoperation import router as teleoperation_router
     from modules.aloha_teleoperation import router as aloha_teleoperation_router
     from modules.aloha_hardware_api import router as aloha_hardware_router
     from modules.safety import router as safety_router
@@ -119,7 +118,6 @@ app.add_middleware(
 
 # Include module routers with their prefixes
 app.include_router(robot_router)
-app.include_router(teleoperation_router)
 app.include_router(aloha_teleoperation_router)
 app.include_router(aloha_hardware_router)
 app.include_router(safety_router)
@@ -259,7 +257,7 @@ async def root():
             "version": "3.0.0",
             "modules": [
                 {"name": "robot", "description": "Robot connection and hardware management"},
-                {"name": "teleoperation", "description": "Advanced control with presets"},
+                {"name": "aloha_teleoperation", "description": "ALOHA teleoperation"},
                 {"name": "safety", "description": "Emergency stop and safety systems"},
                 {"name": "monitoring", "description": "Performance tracking and analytics"},
                 {"name": "recording", "description": "Dataset management and recording"},
@@ -295,10 +293,10 @@ async def get_modules():
             "endpoints": ["connect", "disconnect", "status", "reboot"]
         },
         {
-            "name": "teleoperation", 
-            "prefix": "/api/teleoperation",
-            "description": "Advanced teleoperation with presets",
-            "endpoints": ["start", "stop", "presets", "status"]
+            "name": "aloha_teleoperation",
+            "prefix": "/api/aloha-teleoperation",
+            "description": "ALOHA teleoperation",
+            "endpoints": ["start", "stop", "status"]
         },
         {
             "name": "safety",

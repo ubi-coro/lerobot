@@ -15,7 +15,7 @@ Features:
 
 Modules:
 - robot.py: Robot connection and hardware management
-- teleoperation.py: Advanced teleoperation with presets
+- aloha_teleoperation.py: ALOHA teleoperation (LeRobot native)
 - safety.py: Enhanced emergency stop and safety systems
 - monitoring.py: Performance tracking and analytics
 - recording.py: Dataset management and episode recording
@@ -58,7 +58,7 @@ except ImportError as e:
 # Import module routers
 try:
     from modules.robot import router as robot_router
-    from modules.teleoperation import router as teleoperation_router
+    from modules.aloha_teleoperation import router as aloha_teleoperation_router
     from modules.safety import router as safety_router
     from modules.monitoring import router as monitoring_router
     from modules.recording import router as recording_router
@@ -113,7 +113,7 @@ app.add_middleware(
 
 # Include module routers with their prefixes
 app.include_router(robot_router)
-app.include_router(teleoperation_router)
+app.include_router(aloha_teleoperation_router)
 app.include_router(safety_router)
 app.include_router(monitoring_router)
 app.include_router(recording_router)

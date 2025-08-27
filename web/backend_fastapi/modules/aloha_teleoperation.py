@@ -1,27 +1,27 @@
 """
 ALOHA Teleoperation Module
-=========================
+==========================
 
-ALOHA-specific teleoperation implementation that combines:
-- Your advanced preset system (Safe/Normal/Performance)
-- LeLab-style direct hardware control for responsiveness
-- LeRobot's ALOHA robot classes for proper hardware integration
-- Real-time joint position broadcasting for visualization
+Thin FastAPI wrapper around LeRobot's ALOHA teleoperation primitives.
 
-This bridges the gap between your sophisticated web interface
-and the hardware-specific needs of ALOHA teleoperation.
+Removed legacy custom preset layer (SAFE / NORMAL / PERFORMANCE) to rely on
+one canonical configuration object (AlohaConfig) with optional overrides
+from the frontend. This keeps close alignment with upstream LeRobot while
+retaining:
+    * Operation mode mapping (bimanual / left_only / right_only)
+    * Camera enable / disable logic
+    * Threaded control loop with stop event
+    * Basic safety guard (auto-enable safety_limits for extreme values)
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 import logging
-import asyncio
 import time
 import threading
 import os
 from enum import Enum
-import json
 
 # ALOHA-specific imports from LeRobot
 from lerobot.common.robot_devices.robots.configs import AlohaRobotConfig
@@ -45,16 +45,10 @@ def get_calibration_dir():
 # Create router
 router = APIRouter(prefix="/api/aloha-teleoperation", tags=["aloha-teleoperation"])
 
-# Enums for better type safety
 class OperationMode(str, Enum):
     BIMANUAL = "bimanual"
     LEFT_ONLY = "left_only"
     RIGHT_ONLY = "right_only"
-
-class PresetType(str, Enum):
-    SAFE = "safe"
-    NORMAL = "normal" 
-    PERFORMANCE = "performance"
 
 # Pydantic models
 class ApiResponse(BaseModel):
@@ -75,53 +69,21 @@ class AlohaConfig(BaseModel):
     calibration_dir: str = Field(default_factory=get_calibration_dir, description="Calibration directory")
 
 class AlohaStartRequest(BaseModel):
-    """Start ALOHA teleoperation request"""
-    config: Optional[AlohaConfig] = None
-    preset: Optional[PresetType] = None
-    config_overrides: Optional[Dict[str, Any]] = None
-
-# ALOHA Preset configurations (inspired by your system)
-ALOHA_PRESET_CONFIGURATIONS = {
-    PresetType.SAFE: AlohaConfig(
-        fps=30,
-        max_relative_target=5.0,  # Very conservative for safety
-        moving_time=0.15,  # Slower movements
-        operation_mode=OperationMode.BIMANUAL,
-        show_cameras=True,
-        display_data=False,  # Disabled by default for safety mode
-        safety_limits=True,
-        performance_monitoring=True
-    ),
-    PresetType.NORMAL: AlohaConfig(
-        fps=30,
-        max_relative_target=50.0,  # Increased from 25 to allow better control
-        moving_time=0.1,  # Standard ALOHA timing
-        operation_mode=OperationMode.BIMANUAL,
-        show_cameras=True,
-        display_data=False,  # Disabled by default
-        safety_limits=True,
-        performance_monitoring=True
-    ),
-    PresetType.PERFORMANCE: AlohaConfig(
-        fps=60,
-        max_relative_target=None,  # No limits - advanced users only
-        moving_time=0.05,  # Faster response
-        operation_mode=OperationMode.BIMANUAL,
-        show_cameras=False,  # Disabled for performance
-        display_data=True,   # Use external display for better performance
-        safety_limits=False,  # Advanced users only
-        performance_monitoring=True
-    )
-}
+    """Start ALOHA teleoperation request (single configuration path)."""
+    # Accept loose dict so we can map legacy operation_mode strings (e.g. 'right_arm')
+    config: Optional[Dict[str, Any]] = None
 
 # Global state for ALOHA teleoperation
 aloha_state = {
     "active": False,
-    "robot": None,
+    "robot": None,          # Robot instance in use for teleoperation
+    "owned_robot": False,    # Whether this module created (and must disconnect) the robot
     "config": None,
     "start_time": None,
     "control_thread": None,
     "stop_event": threading.Event(),
+    "events": None,          # ControlEvents instance (for immediate exit signaling)
+    "stage": "idle",        # idle|initializing|running|stopping
     "performance_metrics": {
         "frames_processed": 0,
         "average_fps": 0.0,
@@ -129,6 +91,12 @@ aloha_state = {
         "last_joint_update": 0.0
     }
 }
+
+# Attempt to import existing robot_service (created in modules.robot) to reuse already-connected hardware
+try:
+    from .robot import robot_service  # type: ignore
+except Exception:
+    robot_service = None  # Fallback; will create local robot if needed
 
 def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
     """
@@ -189,18 +157,24 @@ def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
         logger.error(f"Error creating ALOHA robot config: {e}")
         raise
 
-def aloha_teleoperation_worker(config: AlohaConfig):
+def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
     """
     Worker thread for ALOHA teleoperation.
     This function now integrates with LeRobot's control_loop for proper functionality.
     """
     try:
-        # 1. Create Robot Instance
-        logger.info(f"Creating ALOHA robot config for operation mode: {config.operation_mode}")
-        robot_config = create_aloha_robot_config(config)
-        robot = make_robot_from_config(robot_config)
-        robot.connect()
-        logger.info("ALOHA robot connected successfully")
+        if reuse_existing and aloha_state["robot"] is not None:
+            robot = aloha_state["robot"]
+            logger.info("Reusing already connected robot instance for teleoperation (no reconnection)")
+        else:
+            # 1. Create Robot Instance
+            logger.info(f"Creating ALOHA robot config for operation mode: {config.operation_mode}")
+            robot_config = create_aloha_robot_config(config)
+            robot = make_robot_from_config(robot_config)
+            robot.connect()
+            aloha_state["robot"] = robot
+            aloha_state["owned_robot"] = True
+            logger.info("ALOHA robot connected successfully (new instance)")
 
         # 2. Prepare for LeRobot's control_loop
         # Create a control config object that control_loop understands
@@ -225,22 +199,42 @@ def aloha_teleoperation_worker(config: AlohaConfig):
                     self["exit_early"] = True
 
         events = StoppableControlEvents({"exit_early": False})
+        # Store events so stop endpoint can signal immediate exit
+        aloha_state["events"] = events
 
-        # 3. Run LeRobot's main control loop
-        logger.info(f"Starting teleoperation using LeRobot's control_loop with display_data={control_cfg.display_data}")
-        control_loop(
-            robot=robot,
-            teleoperate=True,
-            display_data=control_cfg.display_data,
-            fps=control_cfg.fps,
-            events=events,
-        )
+        # 3. Run LeRobot's main control loop in short segments to allow responsive stop
+        aloha_state["stage"] = "running"
+        logger.info(f"Starting segmented teleoperation loop (fps={control_cfg.fps}, display_data={control_cfg.display_data})")
+        segment_seconds = 1.0  # run control loop in 1s segments
+        while not aloha_state["stop_event"].is_set():
+            control_loop(
+                robot=robot,
+                teleoperate=True,
+                display_data=control_cfg.display_data,
+                fps=control_cfg.fps,
+                events=events,
+                control_time_s=segment_seconds,
+            )
+            # Additional early exit if events flagged exit_early
+            if events["exit_early"]:
+                break
 
     except Exception as e:
         logger.error(f"Error in ALOHA teleoperation worker: {e}", exc_info=True)
     finally:
-        if 'robot' in locals() and robot.is_connected:
-            robot.disconnect()
+        aloha_state["stage"] = "stopping"
+        # Only disconnect hardware if we created it here
+        if 'robot' in locals() and aloha_state.get("owned_robot") and robot.is_connected:
+            try:
+                robot.disconnect()
+                logger.info("Disconnected owned robot instance after teleoperation")
+            except Exception as e:
+                logger.warning(f"Error disconnecting owned robot: {e}")
+        if not aloha_state.get("owned_robot"):
+            logger.info("Leaving shared robot connected (owned by RobotService)")
+        if aloha_state.get("owned_robot"):
+            aloha_state["robot"] = None
+        aloha_state["owned_robot"] = False
         aloha_state["active"] = False
         aloha_state["stop_event"].clear()
         logger.info("ALOHA teleoperation worker stopped and cleaned up.")
@@ -248,9 +242,8 @@ def aloha_teleoperation_worker(config: AlohaConfig):
 @router.post("/start", response_model=ApiResponse)
 async def start_aloha_teleoperation(request: AlohaStartRequest):
     """
-    Start ALOHA teleoperation with advanced configuration options.
-    
-    Combines your preset system with ALOHA-specific hardware control.
+    Start ALOHA teleoperation with a single unified configuration.
+    Legacy preset layer removed: frontend passes an optional config dict.
     """
     try:
         if aloha_state["active"]:
@@ -259,42 +252,26 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
                 message="ALOHA teleoperation is already active"
             )
         
-        logger.info("Starting ALOHA teleoperation with advanced configuration")
-        
-        # Determine configuration (your preset system)
-        if request.preset:
-            # Create a new instance from the preset dict to allow attribute modification
-            preset_config = ALOHA_PRESET_CONFIGURATIONS[request.preset]
-            config = AlohaConfig(**preset_config.dict())
-            logger.info(f"Using ALOHA preset configuration: {request.preset}")
-            
-            # Apply config overrides from frontend
-            if request.config_overrides:
-                logger.info(f"Applying config overrides: {request.config_overrides}")
-                for key, value in request.config_overrides.items():
-                    if hasattr(config, key):
-                        # Fix operation mode mapping from frontend to backend
-                        if key == "operation_mode":
-                            if value == "right_arm":
-                                value = "right_only"
-                            elif value == "left_arm":
-                                value = "left_only" 
-                            elif value == "bimanual":
-                                value = "bimanual"
-                            logger.info(f"Mapped operation_mode: {request.config_overrides[key]} -> {value}")
-                        
-                        setattr(config, key, value)
-                        logger.info(f"Override applied: {key} = {value}")
-                    else:
-                        logger.warning(f"Unknown config override: {key}")
-                        
-        elif request.config:
-            config = request.config
-            logger.info("Using custom ALOHA configuration")
+        logger.info("Starting ALOHA teleoperation (single-config mode)")
+
+        # Build config object (apply mapping for legacy operation_mode values)
+        if request.config:
+            cfg_dict = {**request.config}
+            if "operation_mode" in cfg_dict:
+                original = cfg_dict["operation_mode"]
+                if original == "right_arm":
+                    cfg_dict["operation_mode"] = "right_only"
+                elif original == "left_arm":
+                    cfg_dict["operation_mode"] = "left_only"
+                elif original == "bimanual":
+                    cfg_dict["operation_mode"] = "bimanual"
+                if original != cfg_dict["operation_mode"]:
+                    logger.info(f"Mapped operation_mode: {original} -> {cfg_dict['operation_mode']}")
+            config = AlohaConfig(**cfg_dict)
+            logger.info("Using provided ALOHA configuration")
         else:
-            # Default to normal preset
-            config = ALOHA_PRESET_CONFIGURATIONS[PresetType.NORMAL]
-            logger.info("Using default (normal) ALOHA configuration")
+            config = AlohaConfig()
+            logger.info("Using default ALOHA configuration")
         
         # Validate configuration for ALOHA
         if config.max_relative_target and config.max_relative_target > 50:
@@ -307,12 +284,24 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
                 logger.info(f"Reducing FPS from {config.fps} to 30 for single-arm operation to improve performance")
                 config.fps = 30
         
-        # Start teleoperation
+        # Determine reuse of existing robot_service robot
+        reuse_existing = False
+        if robot_service and getattr(robot_service, 'status', {}).get('connected') and getattr(robot_service, 'robot', None):
+            aloha_state["robot"] = robot_service.robot
+            aloha_state["owned_robot"] = False
+            reuse_existing = True
+            logger.info("Detected existing connected robot_service robot; will reuse for teleoperation")
+        else:
+            logger.info("No existing connected robot_service robot found; creating new one")
+
+        # Start teleoperation state
         aloha_state["active"] = True
         aloha_state["config"] = config.dict()
         aloha_state["start_time"] = time.time()
         aloha_state["stop_event"].clear()
-        
+        aloha_state["events"] = None  # will be set by worker once created
+        aloha_state["stage"] = "initializing"
+
         # Reset performance metrics
         aloha_state["performance_metrics"] = {
             "frames_processed": 0,
@@ -320,24 +309,23 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
             "latency_ms": 0.0,
             "last_joint_update": 0.0
         }
-        
+
         # Start worker thread (LeLab-style threading)
         aloha_state["control_thread"] = threading.Thread(
             target=aloha_teleoperation_worker,
-            args=(config,),
+            args=(config, reuse_existing),
             daemon=True
         )
         aloha_state["control_thread"].start()
-        
+
         logger.info(f"ALOHA teleoperation started with config: {config.dict()}")
-        
+
         return ApiResponse(
             status="success",
             message="ALOHA teleoperation started successfully",
             data={
                 "active": True,
                 "configuration": config.dict(),
-                "preset_used": request.preset,
                 "start_time": aloha_state["start_time"],
                 "operation_mode": config.operation_mode
             }
@@ -370,6 +358,12 @@ async def stop_aloha_teleoperation():
         
         # Signal stop (LeLab-style)
         aloha_state["stop_event"].set()
+        if aloha_state.get("events") is not None:
+            # Directly request early exit
+            try:
+                aloha_state["events"]["exit_early"] = True
+            except Exception:
+                pass
         
         # Wait for thread to finish
         if aloha_state["control_thread"] and aloha_state["control_thread"].is_alive():
@@ -423,14 +417,15 @@ async def get_aloha_status():
             
         status_data = {
             "active": aloha_state["active"],
+            "stage": aloha_state.get("stage"),
             "robot_type": "ALOHA",
             "configuration": aloha_state["config"],
             "performance_metrics": aloha_state["performance_metrics"],
             "session_duration": (
-                time.time() - aloha_state["start_time"] 
-                if aloha_state["start_time"] else 0
+                time.time() - aloha_state["start_time"] if aloha_state["start_time"] else 0
             ),
             "robot_connected": aloha_state["robot"] is not None,
+            "owned_robot": aloha_state.get("owned_robot"),
             "display_data_active": aloha_state["config"].get("display_data", False) if aloha_state["config"] else False
         }
         
@@ -447,39 +442,4 @@ async def get_aloha_status():
             detail=f"Failed to get ALOHA status: {str(e)}"
         )
 
-@router.get("/presets", response_model=ApiResponse)
-async def get_aloha_presets():
-    """
-    Get available ALOHA configuration presets.
-    """
-    try:
-        presets_info = {}
-        for preset_name, config in ALOHA_PRESET_CONFIGURATIONS.items():
-            presets_info[preset_name] = {
-                "name": preset_name.title(),
-                "description": _get_aloha_preset_description(preset_name),
-                "configuration": config.dict(),
-                "robot_type": "ALOHA"
-            }
-        
-        return ApiResponse(
-            status="success",
-            message="Available ALOHA presets retrieved",
-            data={"presets": presets_info}
-        )
-        
-    except Exception as e:
-        logger.error(f"Failed to get ALOHA presets: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get ALOHA presets: {str(e)}"
-        )
-
-def _get_aloha_preset_description(preset: PresetType) -> str:
-    """Get description for an ALOHA preset configuration"""
-    descriptions = {
-        PresetType.SAFE: "Safe mode optimized for ALOHA with conservative limits and full safety features",
-        PresetType.NORMAL: "Balanced ALOHA performance with standard safety features enabled", 
-        PresetType.PERFORMANCE: "High-performance ALOHA mode for experienced users with minimal safety limits"
-    }
-    return descriptions.get(preset, "Custom ALOHA configuration")
+# Preset endpoint removed: legacy custom presets deprecated.

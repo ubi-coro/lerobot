@@ -64,32 +64,22 @@ export default {
   // Start teleoperation with ALOHA-compatible configuration
   startTeleoperation(config = {}) {
     console.log('Starting ALOHA teleoperation with config:', config);
-    
-    // Call the FastAPI ALOHA teleoperation endpoint
+
+    // Prepare body matching simplified backend (single config dict)
     const teleoperationBody = {
       config: {
         fps: config.fps || 30,
         operation_mode: config.operation_mode || 'bimanual',
         show_cameras: config.show_cameras !== false,
-        display_data: config.display_data || false,  // Add display_data parameter
+        display_data: config.display_data || false,
         safety_limits: config.safety_limits !== false,
         performance_monitoring: true
       }
     };
-    
-    // If a preset is specified, use it with custom overrides
-    if (config.preset) {
-      teleoperationBody.preset = config.preset;
-      // Keep the config as overrides instead of deleting it
-      teleoperationBody.config_overrides = teleoperationBody.config;
-      delete teleoperationBody.config;
-    }
-    
+
     return fetch('/api/aloha-teleoperation/start', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(teleoperationBody)
     }).then(async response => {
       const data = await response.json();
@@ -131,28 +121,6 @@ export default {
       }
       return { data };
     });
-  },
-
-  // Get available presets
-  getTeleoperationPresets() {
-    return fetch('/api/aloha-teleoperation/presets', {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    }).then(async response => {
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || data.message || 'Failed to get presets');
-      }
-      return { data };
-    });
-  },
-
-  // Start teleoperation with preset
-  startTeleoperationWithPreset(preset, overrides = {}) {
-    console.log('Starting teleoperation with preset:', preset);
-    return this.startTeleoperation({ preset, ...overrides });
   },
 
   // Emergency stop (placeholder - would need to be implemented in backend)
