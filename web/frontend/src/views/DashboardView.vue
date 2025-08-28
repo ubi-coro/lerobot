@@ -24,7 +24,7 @@
         </div>
       </div>
       
-      <div class="operation-card primary" @click="startRecording" :disabled="!canStartRecording">
+  <div class="operation-card primary" @click="startRecording">
         <div class="card-icon">📹</div>
         <h3>Record Dataset</h3>
         <p>Capture training demonstrations</p>
@@ -139,7 +139,8 @@ const canStartTeleoperation = computed(() => {
 const canStartRecording = computed(() => {
   // Allow recording in development mode for UI testing
   const isDevelopment = import.meta.env.DEV;
-  return isDevelopment || (robotStore.status.connected && robotStore.availableCameras.length > 0);
+  // For now only require robot connection (cameras optional; backend can validate)
+  return isDevelopment || robotStore.status.connected;
 })
 
 const developmentModeActive = computed(() => {
@@ -167,9 +168,8 @@ const startTeleoperation = () => {
 }
 
 const startRecording = () => {
-  if (canStartRecording.value) {
-    router.push('/record-dataset')
-  }
+  // Always allow navigation; the recording view itself will validate prerequisites
+  router.push('/record-dataset')
 }
 
 const replayDataset = () => {
@@ -290,15 +290,11 @@ const loadSystemData = async () => {
 
 // Lifecycle
 onMounted(() => {
+  // Ensure socket (camera/status events) is initialized early
+  try { robotStore.initSocket(); } catch (e) { /* ignore */ }
   loadSystemData()
-  
-  // Set up periodic updates
-  const interval = setInterval(loadSystemData, 5000) // Update every 5 seconds
-  
-  // Cleanup on unmount
-  onUnmounted(() => {
-    clearInterval(interval)
-  })
+  const interval = setInterval(loadSystemData, 5000)
+  onUnmounted(() => clearInterval(interval))
 })
 </script>
 
@@ -349,6 +345,9 @@ onMounted(() => {
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 270px; /* enforce consistent height for alignment */
 }
 
 .operation-card:hover:not([disabled]) {
@@ -417,6 +416,7 @@ onMounted(() => {
   gap: 0.25rem;
   font-size: 0.9rem;
   color: #9ca3af;
+  flex-grow: 1; /* push status to bottom for consistent layout */
 }
 
 .card-status {
@@ -531,9 +531,7 @@ onMounted(() => {
     gap: 1rem;
   }
   
-  .operation-card {
-    padding: 1.25rem;
-  }
+  .operation-card { padding: 1.25rem; min-height: 250px; }
   
   .card-icon {
     font-size: 2.5rem;
@@ -553,9 +551,7 @@ onMounted(() => {
     gap: 0.75rem;
   }
   
-  .operation-card {
-    padding: 1rem;
-  }
+  .operation-card { padding: 1rem; min-height: 230px; }
   
   .card-icon {
     font-size: 2rem;
@@ -591,9 +587,7 @@ onMounted(() => {
     gap: 0.5rem;
   }
   
-  .operation-card {
-    padding: 0.75rem;
-  }
+  .operation-card { padding: 0.75rem; min-height: 210px; }
   
   .card-icon {
     font-size: 1.75rem;
@@ -635,9 +629,7 @@ onMounted(() => {
     gap: 0.4rem;
   }
   
-  .operation-card {
-    padding: 0.6rem;
-  }
+  .operation-card { padding: 0.6rem; min-height: 200px; }
   
   .card-icon {
     font-size: 1.5rem;
@@ -666,9 +658,7 @@ onMounted(() => {
 }
 
 @media (max-width: 360px) {
-  .operation-card {
-    padding: 0.5rem;
-  }
+  .operation-card { padding: 0.5rem; min-height: 190px; }
   
   .card-icon {
     font-size: 1.25rem;

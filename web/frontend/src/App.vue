@@ -26,10 +26,10 @@
         </li>
         
         <li class="nav-item mb-1">
-          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
+          <router-link to="/record-dataset" class="nav-link text-light d-flex align-items-center" active-class="active">
             <i class="bi bi-record-circle me-2"></i>
             <span v-if="!sidebarCollapsed">Record Dataset</span>
-          </div>
+          </router-link>
         </li>
         
         <li class="nav-item mb-1">
@@ -161,6 +161,12 @@ export default {
       const titles = {
         'home': 'Dashboard',
         'control': 'Robot Control',
+        'teleoperation': 'Teleoperation',
+        'record-dataset': 'Record Dataset',
+        'replay-dataset': 'Replay Dataset',
+        'training': 'Training',
+        'calibration': 'Calibration',
+        'data-visualization': 'Data Visualization',
         'datasets': 'Dataset Management',
         'policies': 'Policy Management'
       };

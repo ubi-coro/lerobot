@@ -144,7 +144,14 @@ async def browse_directory(request: DirectoryBrowseRequest):
     Returns a list of subdirectories in the specified path.
     """
     try:
-        path = Path(request.path)
+        raw_path = request.path.strip() if request.path else ''
+        # Support home expansion using ~ similar to shell behavior
+        if raw_path in ('', '~', '~/'):
+            path = Path.home()
+        elif raw_path.startswith('~/'):
+            path = Path.home() / raw_path[2:]
+        else:
+            path = Path(raw_path)
         
         # Validate path exists and is accessible
         if not path.exists():

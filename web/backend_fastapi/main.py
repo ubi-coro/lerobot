@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import socketio
+import asyncio
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import sys
@@ -144,8 +145,27 @@ sio = socketio.AsyncServer(
 # Set the global Socket.IO instance for modules to use
 shared.set_socketio(sio)
 
+# Recording worker (Phase 1) registration
+try:
+    from .modules import recording_worker as gui_recording_worker  # type: ignore
+    # Initialize background status emitter after event loop starts
+    # (We can't call get_running_loop yet; schedule via create_task later)
+    gui_recording_worker.register_socketio_handlers(sio)
+except Exception as e:
+    logger.error(f"Failed to initialize GUI recording worker: {e}")
+
 # Create Socket.IO ASGI app
 socket_app = socketio.ASGIApp(sio, app)
+
+@app.on_event("startup")
+async def _init_gui_recording_worker():  # pragma: no cover - startup hook
+    try:
+        if 'gui_recording_worker' in globals():
+            loop = asyncio.get_running_loop()
+            gui_recording_worker.init_recording_worker(loop)
+            logger.info("GUI recording worker initialized (status emitter started)")
+    except Exception as e:  # pragma: no cover
+        logger.error(f"Error initializing GUI recording worker: {e}")
 
 # Pydantic models for main app
 class ApiResponse(BaseModel):
