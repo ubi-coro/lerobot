@@ -1,8 +1,10 @@
 <template>
   <div class="teleoperation-view">
     <div class="page-header">
-      <h1><i class="bi bi-joystick me-3"></i>Robot Teleoperation</h1>
-      <p class="subtitle">Real-time bimanual robot control with safety features</p>
+      <!-- Replaced large heading with concise left-aligned contextual intro -->
+      <p class="page-intro">
+        <strong>Instruction:</strong> Configure how you want to control the robot (bimanual or single arm), choose the environment, and optional external data display. Press <em>Start Teleoperation</em> to begin; hit the <kbd>Space</kbd> bar anytime for an emergency stop.
+      </p>
     </div>
 
   <!-- Connection status card removed: dashboard handles connection -->
@@ -378,21 +380,29 @@ onUnmounted(() => {
 }
 
 .page-header {
-  text-align: center;
-  margin-bottom: 2rem;
+  margin-bottom: 1.25rem;
 }
 
-.page-header h1 {
-  font-size: 2.5rem;
+/* Intro paragraph style (left-aligned) */
+.page-intro {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: #374151;
+  background: #f3f4f6;
+  padding: 0.85rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  margin: 0; /* remove default p margin */
+  text-align: left;
+}
+
+.page-intro kbd {
+  background: #1f2937;
+  color: #f9fafb;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
   font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 0.5rem;
-}
-
-.subtitle {
-  font-size: 1.2rem;
-  color: #6b7280;
-  margin: 0;
 }
 
 /* Status card removed */
