@@ -423,7 +423,7 @@ const emergencyStop = async () => {
 
 // Method to clear error messages
 const clearError = () => {
-  robotStore.status.error = null;
+  robotStore.internalErrorMessage = '';
 };
 
 // Debug helper methods

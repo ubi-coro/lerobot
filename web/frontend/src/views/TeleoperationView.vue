@@ -5,56 +5,10 @@
       <p class="subtitle">Real-time bimanual robot control with safety features</p>
     </div>
 
-    <!-- Connection Status Card -->
-    <div class="status-card" :class="connectionStatusClass">
-      <div class="status-header">
-        <div class="status-icon">
-          <i :class="statusIcon"></i>
-        </div>
-        <div class="status-info">
-          <h3>{{ statusTitle }}</h3>
-          <p>{{ statusMessage }}</p>
-        </div>
-        <div class="status-actions" v-if="!isConnecting">
-          <button 
-            v-if="!robotStore.isConnected" 
-            @click="connectRobot" 
-            class="btn btn-primary"
-            :disabled="isConnecting"
-          >
-            <i class="bi bi-power me-2"></i>Connect Robot
-          </button>
-          <button 
-            v-if="robotStore.isConnected && !isOperating" 
-            @click="disconnectRobot" 
-            class="btn btn-secondary"
-          >
-            <i class="bi bi-power me-2"></i>Disconnect
-          </button>
-        </div>
-      </div>
-      
-      <!-- Connection Error Details -->
-      <div v-if="connectionError" class="error-details">
-        <h4><i class="bi bi-exclamation-triangle me-2"></i>Connection Failed</h4>
-        <p>{{ connectionError }}</p>
-        <div class="error-suggestions">
-          <h5>Quick fixes:</h5>
-          <ul>
-            <li>Check robot power and USB connections</li>
-            <li>Verify robot configuration in Calibration section</li>
-            <li>Ensure robot drivers are installed</li>
-            <li>Try restarting the robot hardware</li>
-          </ul>
-          <button @click="openCalibration" class="btn btn-outline">
-            <i class="bi bi-gear me-2"></i>Open Calibration
-          </button>
-        </div>
-      </div>
-    </div>
+  <!-- Connection status card removed: dashboard handles connection -->
 
     <!-- Teleoperation Configuration (shown when connected) -->
-    <div v-if="robotStore.isConnected" class="config-section">
+  <div v-if="robotStore.isConnected" class="config-section">
       <div class="config-card">
         <h3><i class="bi bi-sliders me-2"></i>Teleoperation Settings</h3>
         
@@ -208,10 +162,8 @@ const robotStore = useRobotStore()
 // Removed storeToRefs usage (not imported) – we access reactive store state directly.
 
 // State
-const isConnecting = ref(false)
 const isStarting = ref(false)
 const isOperating = ref(false)
-const connectionError = ref('')
 const operationStartTime = ref(null)
 const operationDuration = ref(0)
 
@@ -273,69 +225,10 @@ const availableCameras = computed(() => {
 })
 
 // Computed properties
-const connectionStatusClass = computed(() => {
-  if (isConnecting.value) return 'connecting'
-  if (connectionError.value) return 'error'
-  if (robotStore.isConnected) return 'connected'
-  return 'disconnected'
-})
-
-const statusIcon = computed(() => {
-  if (isConnecting.value) return 'bi bi-hourglass-split'
-  if (connectionError.value) return 'bi bi-exclamation-triangle'
-  if (robotStore.isConnected) return 'bi bi-check-circle'
-  return 'bi bi-x-circle'
-})
-
-const statusTitle = computed(() => {
-  if (isConnecting.value) return 'Connecting...'
-  if (connectionError.value) return 'Connection Failed'
-  if (robotStore.isConnected) return 'Robot Connected'
-  return 'Robot Disconnected'
-})
-
-const statusMessage = computed(() => {
-  if (isConnecting.value) return 'Establishing connection to robot hardware'
-  if (connectionError.value) return 'Unable to connect to robot'
-  if (robotStore.isConnected) return 'Ready for teleoperation'
-  return 'Click Connect Robot to begin'
-})
+// Removed connection status computations
 
 // Methods
-const connectRobot = async () => {
-  isConnecting.value = true
-  connectionError.value = ''
-  
-  try {
-    // Connect to robot with default bimanual configuration
-    const response = await robotApi.connect('bimanual', {
-      arms: ['left', 'right'],
-      cameras: availableCameras.value.map(cam => cam.id)
-    })
-    
-    // Update robot store status
-    await robotStore.updateStatus()
-    
-    console.log('Robot connected successfully:', response.data)
-    
-  } catch (error) {
-    console.error('Failed to connect to robot:', error)
-    connectionError.value = error.message || 'Unknown connection error'
-  } finally {
-    isConnecting.value = false
-  }
-}
-
-const disconnectRobot = async () => {
-  try {
-    await robotApi.disconnect()
-    await robotStore.updateStatus()
-    isOperating.value = false
-    operationStartTime.value = null
-  } catch (error) {
-    console.error('Failed to disconnect robot:', error)
-  }
-}
+// Connection / disconnection handled elsewhere
 
 const startTeleoperation = async () => {
   isStarting.value = true
@@ -369,7 +262,8 @@ const startTeleoperation = async () => {
           console.error('⚠️ Teleoperation stopped unexpectedly:', status.data)
           clearInterval(statusCheckInterval)
           isOperating.value = false
-          connectionError.value = status.data.message || 'Teleoperation stopped unexpectedly'
+          // Log unexpected stop; surface via alert
+          console.error('Teleoperation stopped unexpectedly:', status.data)
         }
       } catch (error) {
         console.error('❌ Status check failed:', error)
@@ -501,115 +395,7 @@ onUnmounted(() => {
   margin: 0;
 }
 
-/* Status Card */
-.status-card {
-  background: white;
-  border-radius: 1rem;
-  padding: 2rem;
-  margin-bottom: 2rem;
-  border: 2px solid #e5e7eb;
-  transition: all 0.3s ease;
-}
-
-.status-card.disconnected {
-  border-color: #ef4444;
-  background: linear-gradient(135deg, #fef2f2 0%, #ffffff 100%);
-}
-
-.status-card.connecting {
-  border-color: #f59e0b;
-  background: linear-gradient(135deg, #fffbeb 0%, #ffffff 100%);
-}
-
-.status-card.connected {
-  border-color: #10b981;
-  background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 100%);
-}
-
-.status-card.error {
-  border-color: #ef4444;
-  background: linear-gradient(135deg, #fef2f2 0%, #ffffff 100%);
-}
-
-.status-header {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-}
-
-.status-icon {
-  font-size: 3rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.status-card.disconnected .status-icon { color: #ef4444; }
-.status-card.connecting .status-icon { color: #f59e0b; }
-.status-card.connected .status-icon { color: #10b981; }
-.status-card.error .status-icon { color: #ef4444; }
-
-.status-info {
-  flex: 1;
-}
-
-.status-info h3 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.5rem;
-  color: #1f2937;
-}
-
-.status-info p {
-  margin: 0;
-  color: #6b7280;
-}
-
-.status-actions {
-  display: flex;
-  gap: 1rem;
-}
-
-/* Error Details */
-.error-details {
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #f3f4f6;
-}
-
-.error-details h4 {
-  color: #dc2626;
-  margin-bottom: 0.5rem;
-}
-
-.error-details p {
-  color: #6b7280;
-  margin-bottom: 1rem;
-}
-
-.error-suggestions h5 {
-  color: #374151;
-  margin-bottom: 0.5rem;
-}
-
-.error-suggestions ul {
-  list-style: none;
-  padding: 0;
-  margin-bottom: 1rem;
-}
-
-.error-suggestions li {
-  color: #6b7280;
-  margin-bottom: 0.25rem;
-  padding-left: 1.5rem;
-  position: relative;
-}
-
-.error-suggestions li::before {
-  content: '•';
-  position: absolute;
-  left: 0;
-  color: #ef4444;
-}
+/* Status card removed */
 
 /* Configuration Section */
 .config-section {
@@ -715,16 +501,19 @@ onUnmounted(() => {
   border-radius: 0.75rem;
   cursor: pointer;
   transition: all 0.2s ease;
+  color: #111827;
 }
 
 .env-btn:hover:not(:disabled) {
   border-color: #3b82f6;
   background: #eff6ff;
+  color: #111827;
 }
 
 .env-btn.active {
   border-color: #3b82f6;
   background: #dbeafe;
+  color: #111827;
 }
 
 .env-btn:disabled {
@@ -734,6 +523,7 @@ onUnmounted(() => {
 
 .env-btn i {
   font-size: 1.5rem;
+  color: currentColor;
 }
 
 /* Display Options */
@@ -743,33 +533,36 @@ onUnmounted(() => {
   gap: 1rem;
 }
 
+/* Unified checkbox label style with centered checkbox */
 .checkbox-label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  position: relative;
+  display: block;
   cursor: pointer;
-  padding: 0.75rem;
+  padding: 0.85rem 1rem 1.2rem 2.75rem; /* left space for centered checkbox */
   background: #f9fafb;
   border: 1px solid #e5e7eb;
   border-radius: 0.5rem;
   transition: all 0.2s ease;
+  line-height: 1.1;
 }
-
 .checkbox-label:hover {
   background: #f3f4f6;
   border-color: #d1d5db;
 }
-
-.checkbox-label small {
-  color: #6b7280;
-  font-size: 0.85rem;
-  margin-left: 1.75rem;
+.checkbox-label input.config-checkbox {
+  position: absolute;
+  left: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  width: 1.1rem;
+  height: 1.1rem;
 }
-
-/* Checkbox */
-.config-checkbox {
-  margin-right: 0.5rem;
-  transform: scale(1.2);
+.checkbox-label small {
+  display: block;
+  color: #6b7280;
+  font-size: 0.7rem;
+  margin-top: 0.35rem;
 }
 
 /* Operation Controls */

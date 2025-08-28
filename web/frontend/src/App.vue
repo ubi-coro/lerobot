@@ -19,38 +19,62 @@
         </li>
         
         <li class="nav-item mb-1">
-          <router-link to="/teleoperation" class="nav-link text-light d-flex align-items-center" active-class="active">
+          <router-link 
+            to="/teleoperation" 
+            class="nav-link text-light d-flex align-items-center" 
+            active-class="active"
+            :class="{ disabled: !robotConnected }"
+            :tabindex="!robotConnected ? -1 : 0"
+            @click.prevent="!robotConnected && scrollToConnect()"
+          >
             <i class="bi bi-joystick me-2"></i>
             <span v-if="!sidebarCollapsed">Teleoperation</span>
           </router-link>
         </li>
         
         <li class="nav-item mb-1">
-          <router-link to="/record-dataset" class="nav-link text-light d-flex align-items-center" active-class="active">
+          <router-link 
+            to="/record-dataset" 
+            class="nav-link text-light d-flex align-items-center" 
+            active-class="active"
+            :class="{ disabled: !robotConnected }"
+            :tabindex="!robotConnected ? -1 : 0"
+            @click.prevent="!robotConnected && scrollToConnect()"
+          >
             <i class="bi bi-record-circle me-2"></i>
             <span v-if="!sidebarCollapsed">Record Dataset</span>
           </router-link>
         </li>
         
         <li class="nav-item mb-1">
-          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
+          <div 
+            class="nav-link text-light d-flex align-items-center" 
+            :class="{ disabled: !robotConnected }"
+            :style="!robotConnected ? 'opacity:0.5;cursor:not-allowed;' : ''"
+            @click="robotConnected && $router.push('/replay-dataset')"
+          >
             <i class="bi bi-play-circle me-2"></i>
             <span v-if="!sidebarCollapsed">Replay Dataset</span>
           </div>
         </li>
         
         <li class="nav-item mb-1">
-          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
+          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity:0.5;cursor:not-allowed;">
             <i class="bi bi-cpu me-2"></i>
             <span v-if="!sidebarCollapsed">Training</span>
           </div>
         </li>
         
         <li class="nav-item mb-1">
-          <div class="nav-link text-light d-flex align-items-center disabled" style="opacity: 0.5; cursor: not-allowed;">
+          <router-link 
+            to="/calibration" 
+            class="nav-link text-light d-flex align-items-center" 
+            active-class="active"
+            :class="{ 'calibration-needed': calibrationNeeded }"
+          >
             <i class="bi bi-tools me-2"></i>
             <span v-if="!sidebarCollapsed">Calibration</span>
-          </div>
+          </router-link>
         </li>
         
         <li class="nav-item mb-1">
@@ -156,6 +180,10 @@ export default {
     robotConnected() {
       return this.robotStore.status.connected;
     },
+    calibrationNeeded(){
+      const err = (this.robotStore.errorMessage || '').toLowerCase();
+      return err.includes('calibr');
+    },
     currentPageTitle() {
       const routeName = this.$route.name;
       const titles = {
@@ -180,6 +208,10 @@ export default {
     toggleDarkMode() {
       this.darkMode = !this.darkMode;
       document.body.classList.toggle('dark-mode', this.darkMode);
+    },
+    scrollToConnect(){
+      const el = document.querySelector('.robot-connect-panel');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   },
   mounted() {
@@ -264,6 +296,23 @@ body.dark-mode {
 
 .sidebar .nav-link:hover:not(.active) {
   background-color: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar .nav-link.disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.sidebar .nav-link.calibration-needed {
+  animation: pulseCal 1.5s ease-in-out infinite;
+  background-color: rgba(245,158,11,0.15);
+  border-left: 4px solid #f59e0b;
+}
+
+@keyframes pulseCal {
+  0% { box-shadow: 0 0 0 0 rgba(245,158,11,0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+  100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
 }
 
 /* Main content area */

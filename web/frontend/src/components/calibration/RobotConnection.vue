@@ -89,8 +89,8 @@ const connectAloha = async () => {
     isLoading.value = true;
     errorMessage.value = '';
     
-    // Clear store errors by setting status.error to null
-    robotStore.status.error = null;
+  // Clear previous error state
+  robotStore.internalErrorMessage = '';
     
     const configSettings = getConfigurationSettings(configuration.value);
     console.log('Making connection request:', { operationMode: operationMode.value, configSettings });
@@ -107,13 +107,13 @@ const connectAloha = async () => {
     } else {
       const error = response?.data?.message || 'Connection failed';
       errorMessage.value = error;
-      robotStore.status.error = error;
+  robotStore.internalErrorMessage = error;
     }
   } catch (error) {
     console.error('Connection error:', error);
     const errorMsg = error?.response?.data?.message || error?.message || 'Connection failed';
     errorMessage.value = errorMsg;
-    robotStore.status.error = errorMsg;
+  robotStore.internalErrorMessage = errorMsg;
   } finally {
     isLoading.value = false;
   }
@@ -129,7 +129,7 @@ const disconnectRobot = async () => {
     robotStore.status.mode = null;
     robotStore.status.available_arms = [];
     robotStore.status.cameras = [];
-    robotStore.status.error = null; // Clear any error state
+  robotStore.internalErrorMessage = ''; // Clear any error state
     
     console.log('Disconnected successfully');
   } catch (error) {

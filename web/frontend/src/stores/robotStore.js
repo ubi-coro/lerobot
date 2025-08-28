@@ -8,11 +8,12 @@ export const useRobotStore = defineStore('robot', {
     status: {
       connected: false,
       available_arms: [],
-  cameras: [],
-  mode: null // added default mode so components relying on it don't error
+      cameras: [],
+      mode: null, // added default mode so components relying on it don't error
+      error: null // include error slot so getters referencing it are safe
     },
-    errorMessage: '',
-    hasError: false,
+    internalErrorMessage: '',
+    internalHasError: false,
     socket: null,
     cameraStreams: {},
     statusPollingTimer: null,
@@ -41,9 +42,10 @@ export const useRobotStore = defineStore('robot', {
   getters: {
   isConnected: (state) => !!state.status.connected,
   isTeleoperating: (state) => state.status.mode === 'teleoperating',
-    hasError: (state) => !!state.status.error,
-    errorMessage: (state) => state.status.error,
-    availableCameras: (state) => state.status.cameras || []
+  hasError: (state) => state.internalHasError || !!state.status.error,
+  // unified public error message accessor
+  errorMessage: (state) => state.internalErrorMessage || state.status.error || '',
+  availableCameras: (state) => state.status.cameras || []
   },
 
   actions: {
@@ -113,35 +115,34 @@ export const useRobotStore = defineStore('robot', {
           console.log('Configs stored:', this.configs);
         } else {
           console.error('Invalid response format:', response);
-          this.hasError = true;
-          this.errorMessage = 'Invalid API response format';
+          this.internalHasError = true;
+      this.internalErrorMessage = 'Invalid API response format';
         }
       } catch (error) {
         console.error('Error fetching robot configurations:', error);
-        this.hasError = true;
-        this.errorMessage = error.message || 'Failed to load robot configurations';
+  this.internalHasError = true;
+  this.internalErrorMessage = error.message || 'Failed to load robot configurations';
       }
     },
 
     // Connect to robot
-    async connectRobot(robotConfig, robotOverrides = null) {
+  async connectRobot(operationMode = 'bimanual', connectOptions = {}) {
       try {
-        this.hasError = false;
-        this.errorMessage = '';
-
-        const response = await robotApi.connect(robotConfig, robotOverrides);
+        this.internalHasError = false;
+        this.internalErrorMessage = '';
+    const response = await robotApi.connect(operationMode, connectOptions);
 
         if (response.data.status === 'success') {
           this.status = { ...this.status, ...response.data.data };
           console.log('Robot connected successfully');
         } else {
-          this.hasError = true;
-          this.errorMessage = response.data.message || 'Connection failed';
+          this.internalHasError = true;
+          this.internalErrorMessage = response.data.message || 'Connection failed';
         }
       } catch (error) {
-        console.error('Error connecting to robot:', error);
-        this.hasError = true;
-        this.errorMessage = error.response?.data?.message || 'Connection failed';
+  console.error('Error connecting to robot:', error);
+        this.internalHasError = true;
+        this.internalErrorMessage = error.response?.data?.message || 'Connection failed';
       }
     },
 
@@ -161,8 +162,8 @@ export const useRobotStore = defineStore('robot', {
         }
       } catch (error) {
         console.error('Error disconnecting robot:', error);
-        this.hasError = true;
-        this.errorMessage = error.response?.data?.message || 'Disconnect failed';
+  this.internalHasError = true;
+  this.internalErrorMessage = error.response?.data?.message || 'Disconnect failed';
       }
     },
 
@@ -177,8 +178,8 @@ export const useRobotStore = defineStore('robot', {
         }
       } catch (error) {
         console.error('Error starting teleoperation:', error);
-        this.hasError = true;
-        this.errorMessage = error.response?.data?.message || 'Failed to start teleoperation';
+  this.internalHasError = true;
+  this.internalErrorMessage = error.response?.data?.message || 'Failed to start teleoperation';
       }
     },
 
@@ -193,8 +194,8 @@ export const useRobotStore = defineStore('robot', {
         }
       } catch (error) {
         console.error('Error stopping teleoperation:', error);
-        this.hasError = true;
-        this.errorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
+  this.internalHasError = true;
+  this.internalErrorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
       }
     },
 
@@ -274,13 +275,13 @@ export const useRobotStore = defineStore('robot', {
           
           console.log('Advanced teleoperation started with config:', finalConfig);
         } else {
-          this.hasError = true;
-          this.errorMessage = response.data.message || 'Failed to start teleoperation';
+          this.internalHasError = true;
+            this.internalErrorMessage = response.data.message || 'Failed to start teleoperation';
         }
       } catch (error) {
         console.error('Error starting advanced teleoperation:', error);
-        this.hasError = true;
-        this.errorMessage = error.response?.data?.message || 'Failed to start teleoperation';
+  this.internalHasError = true;
+  this.internalErrorMessage = error.response?.data?.message || 'Failed to start teleoperation';
       }
     },
 
@@ -296,8 +297,8 @@ export const useRobotStore = defineStore('robot', {
         }
       } catch (error) {
         console.error('Error stopping teleoperation:', error);
-        this.hasError = true;
-        this.errorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
+  this.internalHasError = true;
+  this.internalErrorMessage = error.response?.data?.message || 'Failed to stop teleoperation';
       }
     },
 

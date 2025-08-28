@@ -6,10 +6,13 @@
       <p class="hero-subtitle">Professional bimanual robot control and data collection</p>
     </div>
     
-    <!-- Operation Grid -->
-    <div class="operation-grid">
+  <!-- Global Robot Connect Panel -->
+  <RobotConnectPanel class="connect-wrapper robot-connect-panel" @connect-error="handleCalibrationNeeded" @connected="clearCalibrationWarning" />
+
+  <!-- Operation Grid -->
+  <div class="operation-grid">
       <!-- Primary Operations (Most Important) -->
-      <div class="operation-card primary" @click="startTeleoperation">
+  <div class="operation-card primary" @click="cardClick(startTeleoperation, canOperate)" :class="{ disabled: !canOperate }">
         <div class="card-icon">🎮</div>
         <h3>Teleoperation</h3>
         <p>Real-time bimanual robot control</p>
@@ -24,7 +27,7 @@
         </div>
       </div>
       
-  <div class="operation-card primary" @click="startRecording">
+  <div class="operation-card primary" @click="cardClick(startRecording, canOperate)" :class="{ disabled: !canOperate }">
         <div class="card-icon">📹</div>
         <h3>Record Dataset</h3>
         <p>Capture training demonstrations</p>
@@ -40,7 +43,7 @@
       </div>
       
       <!-- Secondary Operations (Important) -->
-      <div class="operation-card secondary" @click="replayDataset" :disabled="!hasDatasets">
+  <div class="operation-card secondary" @click="cardClick(replayDataset, canOperate)" :class="{ disabled: !canOperate }">
         <div class="card-icon">📊</div>
         <h3>Replay Dataset</h3>
         <p>Analyze recorded episodes</p>
@@ -55,7 +58,7 @@
         </div>
       </div>
       
-      <div class="operation-card secondary" @click="startTraining" :disabled="!canStartTraining">
+  <div class="operation-card secondary" @click="canStartTraining ? startTraining() : null" :class="{ inactive: !canStartTraining }">
         <div class="card-icon">🧠</div>
         <h3>Training</h3>
         <p>Train AI models on collected data</p>
@@ -71,7 +74,7 @@
       </div>
       
       <!-- Utility Operations (When Needed) -->
-      <div class="operation-card utility" @click="openCalibration" disabled>
+  <div class="operation-card utility" @click="openCalibration" :class="{ highlight: calibrationNeeded }">
         <div class="card-icon">⚙️</div>
         <h3>Calibration</h3>
         <p>System setup & remote support</p>
@@ -121,6 +124,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRobotStore } from '@/stores/robotStore'
+import RobotConnectPanel from '@/components/RobotConnectPanel.vue'
 
 const router = useRouter()
 const robotStore = useRobotStore()
@@ -130,59 +134,26 @@ const datasetCount = ref(0)
 const recommendations = ref([])
 
 // Computed properties for operation availability
-const canStartTeleoperation = computed(() => {
-  // Allow teleoperation in development mode even without robot connection
-  const isDevelopment = import.meta.env.DEV;
-  return isDevelopment || (robotStore.status.connected && robotStore.status.available_arms.length > 0);
-})
+const canOperate = computed(() => robotStore.status.connected);
 
-const canStartRecording = computed(() => {
-  // Allow recording in development mode for UI testing
-  const isDevelopment = import.meta.env.DEV;
-  // For now only require robot connection (cameras optional; backend can validate)
-  return isDevelopment || robotStore.status.connected;
-})
-
-const developmentModeActive = computed(() => {
-  return import.meta.env.DEV && !robotStore.status.connected;
-})
+const calibrationNeeded = ref(false);
 
 const hasDatasets = computed(() => {
   return datasetCount.value > 0
 })
 
-const canStartTraining = computed(() => {
-  return datasetCount.value >= 5
-})
+const canStartTraining = computed(() => datasetCount.value >= 5);
 
-const canAccessCalibration = computed(() => {
-  // Calibration should always be available - it's needed especially when things aren't working
-  return true
-})
+const canAccessCalibration = computed(() => true);
 
 // Operation handlers
-const startTeleoperation = () => {
-  if (canStartTeleoperation.value) {
-    router.push('/teleoperation')
-  }
-}
+const startTeleoperation = () => { if (canOperate.value) router.push('/teleoperation') }
 
-const startRecording = () => {
-  // Always allow navigation; the recording view itself will validate prerequisites
-  router.push('/record-dataset')
-}
+const startRecording = () => { if (canOperate.value) router.push('/record-dataset') }
 
-const replayDataset = () => {
-  if (hasDatasets.value) {
-    router.push('/replay-dataset')
-  }
-}
+const replayDataset = () => { if (canOperate.value) router.push('/replay-dataset') }
 
-const startTraining = () => {
-  if (canStartTraining.value) {
-    router.push('/training')
-  }
-}
+const startTraining = () => { if (canStartTraining.value) router.push('/training') }
 
 const openCalibration = () => {
   // Navigate to calibration/setup view
@@ -221,7 +192,7 @@ const generateRecommendations = () => {
   }
   
   // Ready for teleoperation
-  if (canStartTeleoperation.value && robotStore.status.mode === 'idle') {
+  if (canOperate.value && robotStore.status.mode === 'idle') {
     recs.push({
       operation: 'teleoperation',
       priority: 'medium',
@@ -296,6 +267,21 @@ onMounted(() => {
   const interval = setInterval(loadSystemData, 5000)
   onUnmounted(() => clearInterval(interval))
 })
+
+const cardClick = (fn, enabled) => {
+  // enabled might already be a plain boolean due to template ref unwrapping
+  const isEnabled = (enabled && typeof enabled === 'object' && 'value' in enabled) ? enabled.value : enabled;
+  if (isEnabled) return fn();
+  const el = document.querySelector('.robot-connect-panel');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+
+function handleCalibrationNeeded(msg){
+  calibrationNeeded.value = true;
+}
+function clearCalibrationWarning(){
+  calibrationNeeded.value = false;
+}
 </script>
 
 <style scoped>
@@ -303,7 +289,7 @@ onMounted(() => {
   max-width: 1400px;
   margin: 0 auto;
   padding: 2rem;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  /* Removed local font-family override to ensure global Inter stack consistency across views */
 }
 
 /* Hero Section */
@@ -389,6 +375,24 @@ onMounted(() => {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none !important;
+}
+
+.operation-card.disabled { position:relative; cursor:not-allowed; opacity:.55; }
+.operation-card.disabled::after { content:"Robot connection required"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:.75rem; font-weight:600; color:#374151; backdrop-filter:blur(2px); background:rgba(255,255,255,0.35); text-align:center; padding:.5rem; border-radius:inherit; }
+/* Training card uses .inactive (no overlay text) */
+.operation-card.inactive { opacity:.55; cursor:not-allowed; }
+body.dark-mode .operation-card.disabled::after { background:rgba(17,24,39,0.55); color:#cbd5e1; }
+
+/* Calibration highlight when needed */
+.operation-card.utility.highlight {
+  animation: pulse 1.5s ease-in-out infinite;
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245,158,11,0.25);
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(245,158,11,0.4); }
+  70% { box-shadow: 0 0 0 12px rgba(245,158,11,0); }
+  100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
 }
 
 .card-icon {
