@@ -80,7 +80,7 @@ lerobot-gui
 ```bash
 # Development mode with backend selection
 lerobot-gui-dev                              # FastAPI (default)
-lerobot-gui-dev --backend flask              # Flask (legacy)
+# (Legacy Flask backend removed)
 lerobot-gui-dev --backend fastapi            # FastAPI (explicit)
 ```
 

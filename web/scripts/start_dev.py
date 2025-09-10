@@ -21,7 +21,7 @@ Features:
 - Browser auto-opening with API docs
 - Process management
 
-Note: For backend selection (Flask/FastAPI), use start_dev_advanced.py
+Note: Legacy Flask backend removed; this launcher now always uses FastAPI.
 """
 
 import subprocess
@@ -269,7 +269,7 @@ def main():
     # Validate directories
     if not backend_dir.exists():
         print(f"{Colors.RED}❌ FastAPI backend directory not found: {backend_dir}{Colors.RESET}")
-        print(f"{Colors.YELLOW}💡 Tip: Use start_dev_advanced.py --backend flask for Flask backend{Colors.RESET}")
+        # Legacy Flask backend removed
         sys.exit(1)
         
     if not frontend_dir.exists():

@@ -29,7 +29,6 @@ from typing import Optional
 
 # Import the existing launchers (now in same directory)
 from .start_dev import main as start_dev_main, ProcessManager
-from .start_dev_advanced import main as start_advanced_main
 
 
 class Colors:
@@ -131,24 +130,17 @@ def gui(port: int, host: str, no_browser: bool):
 
 
 @cli.command()
-@click.option('--backend', type=click.Choice(['flask', 'fastapi']), default='fastapi',
-              help='Backend type (default: fastapi)')
 @click.option('--no-browser', is_flag=True, help='Don\'t auto-open browser')
-def dev(backend: str, no_browser: bool):
-    """Start development environment with backend selection"""
+def dev(no_browser: bool):
+    """Start development environment (FastAPI + frontend)"""
     print_lerobot_banner()
-    print(f"{Colors.BOLD}🔧 Starting Development Environment ({backend}){Colors.RESET}")
-    
+    print(f"{Colors.BOLD}🔧 Starting Development Environment (fastapi){Colors.RESET}")
+
     if not check_dependencies(require_node=True):
         sys.exit(1)
-    
-    # Use the existing advanced launcher
+
     try:
-        # Simulate command line args
-        original_argv = sys.argv
-        sys.argv = ['start_dev_advanced.py', '--backend', backend]
-        start_advanced_main()
-        sys.argv = original_argv
+        start_dev_main()
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}🛑 Development environment stopped by user{Colors.RESET}")
     except Exception as e:

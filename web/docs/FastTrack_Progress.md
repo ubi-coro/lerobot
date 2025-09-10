@@ -107,7 +107,10 @@ python --version  # Should be 3.7+
 pip install requests  # For health checks
 
 # Manual start as backup:
-cd web/backend && python app.py &
+# (Legacy Flask backend removed)
+# Previous: cd web/backend && python app.py &
+# Use FastAPI dev launcher instead:
+python web/scripts/start_dev.py &
 cd web/frontend && npm run dev
 ```
 

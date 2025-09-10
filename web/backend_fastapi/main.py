@@ -50,14 +50,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import service bridge for backward compatibility
-try:
-    from service_bridge import ServiceBridge
-    service_bridge = ServiceBridge()
-    logger.info("✅ Service bridge initialized successfully")
-except ImportError as e:
-    logger.warning(f"⚠️ Service bridge not available: {e}")
-    service_bridge = None
+service_bridge = None  # legacy bridge removed
 
 # Import module routers
 try:
@@ -94,7 +87,7 @@ app = FastAPI(
     - Real-time Socket.IO communication
     - Interactive API documentation
     - Modular architecture for maintainability
-    - Service bridge for backward compatibility
+    - (Legacy service bridge removed)
     """,
     version="3.0.0",
     docs_url="/api/docs",
@@ -201,13 +194,7 @@ async def connect(sid, environ):
         'api_docs': '/api/docs'
     }, room=sid)
     
-    # Send initial robot status if available
-    try:
-        if service_bridge:
-            status = service_bridge.get_robot_status()
-            await sio.emit('robot_status', status, room=sid)
-    except Exception as e:
-        logger.error(f"Error sending initial robot status: {e}")
+    # Initial robot status intentionally not sent (legacy bridge removed)
 
 @sio.event
 async def disconnect(sid):
@@ -228,14 +215,10 @@ async def robot_command(sid, data):
         logger.info(f"📡 Received legacy robot command: {command}")
         
         if command == 'get_status':
-            if service_bridge:
-                status = service_bridge.get_robot_status()
-                await sio.emit('robot_status', status, room=sid)
-            else:
-                await sio.emit('robot_status', {
-                    'status': 'disconnected',
-                    'message': 'Service bridge not available'
-                }, room=sid)
+            await sio.emit('robot_status', {
+                'status': 'disconnected',
+                'message': 'No hardware status available yet'
+            }, room=sid)
         
         elif command == 'emergency_stop':
             # Forward to safety module
@@ -308,7 +291,7 @@ async def health_check():
         data={
             "modules_loaded": 6,
             "socket_clients": len(connected_clients),
-            "service_bridge": service_bridge is not None
+            "service_bridge": False
         }
     )
 
@@ -381,8 +364,7 @@ async def startup_event():
     logger.info("🚀 Starting LeRobot Modular FastAPI Backend")
     logger.info("📋 Loaded modules: robot, teleoperation, aloha-teleoperation, aloha-hardware, safety, monitoring, recording, configuration")
     
-    if service_bridge:
-        logger.info("🔗 Service bridge available for backward compatibility")
+    # legacy bridge removed
     
     logger.info("✅ Backend initialization complete")
 

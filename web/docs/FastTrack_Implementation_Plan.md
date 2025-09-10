@@ -412,7 +412,9 @@ const QUICK_PRESETS = {
 ### **Step 1: Test Current System**
 ```bash
 # 1. Start your current system
-cd web/backend && python app.py
+# Legacy Flask backend removed. To run FastAPI backend use:
+# python web/scripts/start_dev.py  (development)
+# or python web/scripts/start_gui.py (production/placeholder)
 cd web/frontend && npm run dev
 
 # 2. Test basic workflow:

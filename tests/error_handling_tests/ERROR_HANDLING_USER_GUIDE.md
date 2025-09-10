@@ -37,7 +37,7 @@ python lerobot/scripts/control_robot.py --robot.type=aloha --control.type=teleop
 
 ### Web Interface
 ```bash
-cd /home/jannick/PycharmProjects/lerobot/web/backend
+cd /home/jannick/PycharmProjects/lerobot/web/backend_fastapi
 python app.py
 # Navigate to web interface - error handling is enabled by default
 ```
@@ -174,7 +174,7 @@ INFO: Successfully recovered follower_left.shoulder
 - `lerobot/common/robot_devices/control_utils.py` - Control loop integration
 
 ### Web Interface
-- `web/backend/services/robot_service.py` - Web backend integration
+- (Legacy Flask file removed) Old path `web/backend/services/robot_service.py` has been replaced by FastAPI modular services under `web/backend_fastapi/modules/`.
 
 ### Documentation & Testing
 - `lerobot/common/robot_devices/motors/dynamixel_error_handler.py` - Error handler module (already existed)

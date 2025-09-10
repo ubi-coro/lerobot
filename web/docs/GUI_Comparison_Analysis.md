@@ -231,7 +231,7 @@ def setup_calibration_files(leader_config, follower_config):
 **Current State (Your Implementation):**
 ```bash
 # Manual process
-cd web/backend
+cd web/backend_fastapi
 python app.py
 
 cd ../frontend  

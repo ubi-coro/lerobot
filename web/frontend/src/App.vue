@@ -84,24 +84,7 @@
           </router-link>
         </li>
         
-        <!-- Legacy/Development section -->
-        <li class="nav-item mb-1 mt-3">
-          <div class="text-muted small px-3" v-if="!sidebarCollapsed">Legacy</div>
-        </li>
         
-        <li class="nav-item mb-1">
-          <router-link to="/control" class="nav-link text-light d-flex align-items-center" active-class="active">
-            <i class="bi bi-robot me-2"></i>
-            <span v-if="!sidebarCollapsed">Robot Control (Legacy)</span>
-          </router-link>
-        </li>
-        
-        <li class="nav-item mb-1">
-          <router-link to="/legacy-home" class="nav-link text-light d-flex align-items-center" active-class="active">
-            <i class="bi bi-list-ul me-2"></i>
-            <span v-if="!sidebarCollapsed">Legacy Dashboard</span>
-          </router-link>
-        </li>
       </ul>
       
       <div class="mt-auto border-top border-secondary p-3">
@@ -188,7 +171,6 @@ export default {
       const routeName = this.$route.name;
       const titles = {
         'home': 'Dashboard',
-        'control': 'Robot Control',
         'teleoperation': 'Teleoperation',
         'record-dataset': 'Record Dataset',
         'replay-dataset': 'Replay Dataset',

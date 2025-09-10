@@ -52,7 +52,7 @@ For real hardware testing:
 
 5. For web interface testing, run:
    ```bash
-   cd /home/jannick/PycharmProjects/lerobot/web/backend
+   cd /home/jannick/PycharmProjects/lerobot/web/backend_fastapi
    python app.py
    ```
 
