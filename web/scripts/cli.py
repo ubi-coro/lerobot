@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Optional
 
 # Import the existing launchers (now in same directory)
-from start_dev import main as start_dev_main, ProcessManager
-from start_dev_advanced import main as start_advanced_main
+from .start_dev import main as start_dev_main, ProcessManager
+from .start_dev_advanced import main as start_advanced_main
 
 
 class Colors:
@@ -64,8 +64,13 @@ def get_web_dir() -> Path:
     return Path(__file__).parent.parent
 
 
-def check_dependencies() -> bool:
-    """Check if required dependencies are available"""
+def check_dependencies(require_node: bool | None = None) -> bool:
+    """Check required dependencies.
+
+    If require_node is None, we require Node/npm only when the built frontend
+    is missing (no web/frontend/dist/index.html). This lets production start
+    without Node when assets are already built.
+    """
     web_dir = get_web_dir()
     
     # Check backend
@@ -80,12 +85,18 @@ def check_dependencies() -> bool:
         print(f"{Colors.RED}❌ Vue.js frontend not found at: {frontend_dir}{Colors.RESET}")
         return False
     
-    # Check if npm is available
-    try:
-        subprocess.run(["npm", "--version"], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(f"{Colors.RED}❌ npm not found. Please install Node.js{Colors.RESET}")
-        return False
+    # Decide whether Node is required
+    dist_index = frontend_dir / 'dist' / 'index.html'
+    if require_node is None:
+        require_node = not dist_index.exists()
+    
+    # Check if npm is available only when needed
+    if require_node:
+        try:
+            subprocess.run(["npm", "--version"], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print(f"{Colors.RED}❌ npm not found. Please install Node.js or build the frontend once (npm install && npm run build){Colors.RESET}")
+            return False
     
     print(f"{Colors.GREEN}✅ Dependencies check passed{Colors.RESET}")
     return True
@@ -128,7 +139,7 @@ def dev(backend: str, no_browser: bool):
     print_lerobot_banner()
     print(f"{Colors.BOLD}🔧 Starting Development Environment ({backend}){Colors.RESET}")
     
-    if not check_dependencies():
+    if not check_dependencies(require_node=True):
         sys.exit(1)
     
     # Use the existing advanced launcher
@@ -225,7 +236,7 @@ def create_shortcut(force: bool):
     print(f"{Colors.BOLD}🖥️ Creating Desktop Shortcut{Colors.RESET}")
     
     try:
-        from create_shortcut import create_desktop_shortcut
+        from .create_shortcut import create_desktop_shortcut
         success = create_desktop_shortcut(force=force)
         
         if success:

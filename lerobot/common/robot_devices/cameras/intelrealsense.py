@@ -307,6 +307,9 @@ class IntelRealSenseCamera:
                     break
             if not found:
                 logging.warning(f"Could not find device {self.serial_number} to perform hardware reset.")
+            else:
+                # Disable further resets after successful one
+                self.force_hardware_reset = False
 
         config = rs.config()
         config.enable_device(str(self.serial_number))

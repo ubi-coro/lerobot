@@ -2,7 +2,7 @@
   <div class="main-operation-selector">
     <!-- Hero Section -->
     <div class="hero-section">
-      <h1 class="hero-title">LeRobot Control Center</h1>
+      <h1 class="hero-title">Robot Control Center</h1>
       <p class="hero-subtitle">Professional bimanual robot control and data collection</p>
     </div>
     

@@ -84,7 +84,7 @@ class IntelRealSenseCameraConfig(CameraConfig):
     color_mode: str = "rgb"
     channels: int | None = None
     use_depth: bool = False
-    force_hardware_reset: bool = True
+    force_hardware_reset: bool = False
     rotation: int | None = None
     mock: bool = False
 

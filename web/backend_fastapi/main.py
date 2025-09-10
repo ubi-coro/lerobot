@@ -127,6 +127,16 @@ app.include_router(recording_router)
 app.include_router(configuration_router)
 app.include_router(dataset_router, prefix="/api/dataset", tags=["dataset"])
 
+# Optionally serve built frontend (production mode) if dist exists
+try:
+    frontend_dist = Path(__file__).resolve().parent.parent / 'frontend' / 'dist'
+    if frontend_dist.exists():
+        # Mount at / to serve frontend at root
+        app.mount('/', StaticFiles(directory=frontend_dist, html=True), name='frontend')
+        logger.info(f"✅ Mounted frontend dist at / (path={frontend_dist})")
+except Exception as e:
+    logger.warning(f"⚠️ Could not mount frontend dist: {e}")
+
 # Socket.IO server with CORS support
 sio = socketio.AsyncServer(
     async_mode='asgi',

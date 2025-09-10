@@ -116,14 +116,15 @@ def predict_action(observation, policy, device, use_amp, single_task=None):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
-            if isinstance(observation[name], str):
+            val = observation[name]
+            # Skip pure metadata (strings, lists, dicts, numbers) that are not tensors
+            if not isinstance(val, torch.Tensor):
                 continue
-
             if "image" in name:
-                observation[name] = observation[name].type(torch.float32) / 255
-                observation[name] = observation[name].permute(2, 0, 1).contiguous()
-            observation[name] = observation[name].unsqueeze(0)
-            observation[name] = observation[name].to(device)
+                val = val.type(torch.float32) / 255
+                val = val.permute(2, 0, 1).contiguous()
+            val = val.unsqueeze(0).to(device)
+            observation[name] = val
 
         if single_task is not None:
             observation["task"] = [single_task]
@@ -333,11 +334,9 @@ def control_loop(
         else:
             observation = robot.capture_observation()
             action = None
-            observation["task"] = [single_task]
-            observation["robot_type"] = [policy.robot_type] if hasattr(policy, "robot_type") else [""]
             if policy is not None:
                 pred_action = predict_action(
-                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp, single_task=single_task
                 )
                 # Action can eventually be clipped using `max_relative_target`,
                 # so action actually sent is saved in the dataset.
@@ -378,7 +377,8 @@ def control_loop(
 
 def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
-    busy_wait(1.0 / fps)
+    if fps is not None:
+        busy_wait(1.0 / fps)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()

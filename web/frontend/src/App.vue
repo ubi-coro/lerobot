@@ -4,7 +4,7 @@
     <div :class="['sidebar bg-dark text-light', sidebarCollapsed ? 'sidebar-collapsed' : '']">
       <div class="d-flex align-items-center p-3 border-bottom border-secondary">
         <img src="@/assets/Ubi_CoRo.png" alt="LeRobot" class="logo me-2" v-if="!sidebarCollapsed">
-        <span class="fw-bold fs-5" v-if="!sidebarCollapsed">LeRobot</span>
+        <span class="fw-bold fs-5" v-if="!sidebarCollapsed">Robot Control</span>
         <button @click="toggleSidebar" class="btn btn-sm btn-outline-light ms-auto">
           <i :class="['bi', sidebarCollapsed ? 'bi-chevron-right' : 'bi-chevron-left']"></i>
         </button>
@@ -149,7 +149,7 @@
       <footer class="footer bg-white border-top">
         <div class="container-fluid">
           <div class="d-flex justify-content-between align-items-center">
-            <span>LeRobot Interface &copy; {{ new Date().getFullYear() }}</span>
+            <span>Robot Control Interface &copy; {{ new Date().getFullYear() }}</span>
             <span class="text-muted">Version 1.0</span>
           </div>
         </div>

@@ -20,7 +20,6 @@ and send orders to its motors.
 
 import json
 import logging
-import os
 import time
 import warnings
 from pathlib import Path
@@ -35,15 +34,7 @@ from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.robots.configs import ManipulatorRobotConfig
 from lerobot.common.utils.utils import init_logging
 
-# INTEGRATION POINT: Import enhanced Dynamixel error handler
-# This provides robust error monitoring and recovery for Dynamixel motors
-# Can be disabled by setting enable_monitoring=False in robot config
-try:
-    from lerobot.common.robot_devices.motors.dynamixel_error_handler import DynamixelErrorMonitor
-    DYNAMIXEL_ERROR_HANDLER_AVAILABLE = True
-except ImportError:
-    DYNAMIXEL_ERROR_HANDLER_AVAILABLE = False
-    logging.getLogger(__name__).warning("Dynamixel error handler not available")
+ # legacy dynamixel error handler removed
 
 
 def ensure_safe_goal_position(
@@ -170,32 +161,20 @@ class ManipulatorRobot:
         self,
         config: ManipulatorRobotConfig,
     ):
+        	# Basic attributes
         self.config = config
         self.robot_type = self.config.type
         self.calibration_dir = Path(self.config.calibration_dir)
+
+        # Motors & cameras
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
         self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
         self.cameras = make_cameras_from_configs(self.config.cameras)
+
+        # State flags & logs
         self.is_connected = False
         self.logs = {}
-
-        # INTEGRATION POINT: Initialize Dynamixel error monitoring
-        # This enables robust error detection and recovery for Dynamixel-based robots
-        # Can be disabled via robot config or environment variable
-        if DYNAMIXEL_ERROR_HANDLER_AVAILABLE and self.robot_type in ["koch", "koch_bimanual", "aloha"]:
-            # Check configuration and environment variable
-            config_enabled = getattr(self.config, 'enable_error_monitoring', True)
-            env_disabled = os.environ.get("DISABLE_ERROR_MONITORING", "0") == "1"
-            enable_monitoring = config_enabled and not env_disabled
-            
-            self.error_monitor = DynamixelErrorMonitor(enable_monitoring=enable_monitoring)
-            logging.info(f"Dynamixel error monitoring {'enabled' if enable_monitoring else 'disabled'} for {self.robot_type}")
-        else:
-            self.error_monitor = None
-            if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
-                logging.info("Dynamixel error monitoring not available - install error handler module")
-            else:
-                logging.debug(f"Error monitoring not applicable for robot type: {self.robot_type}")
+        self.error_monitor = None  # legacy error monitoring removed
 
     def get_motor_names(self, arm: dict[str, MotorsBus]) -> list:
         return [f"{arm}_{motor}" for arm, bus in arm.items() for motor in bus.motors]
@@ -508,8 +487,7 @@ class ManipulatorRobot:
 
         # INTEGRATION POINT: Check for motor errors before teleop step
         # This is done periodically (rate-limited) to avoid performance impact
-        if self.error_monitor is not None:
-            self._check_and_handle_motor_errors()
+    # legacy error monitoring removed
 
         # Prepare to assign the position of the leader to the follower
         leader_pos = {}
@@ -526,8 +504,7 @@ class ManipulatorRobot:
                 
                 # Log error and try recovery if error monitor is available
                 logging.error(f"Failed to read leader arm '{name}' position: {e}")
-                if self.error_monitor is not None:
-                    logging.info(f"Attempting error recovery for leader arm '{name}'")
+                # legacy recovery removed
                     # This will be handled by the error monitor
                 raise  # Re-raise for now, but recovery attempt is logged
 
@@ -558,8 +535,7 @@ class ManipulatorRobot:
                 
                 # Log error and try recovery if error monitor is available  
                 logging.error(f"Failed to write goal position to follower arm '{name}': {e}")
-                if self.error_monitor is not None:
-                    logging.info(f"Attempting error recovery for follower arm '{name}'")
+                # legacy recovery removed
                     # This will be handled by the error monitor
                 raise  # Re-raise for now, but recovery attempt is logged
 
@@ -608,75 +584,8 @@ class ManipulatorRobot:
 
         return obs_dict, action_dict
 
-    # INTEGRATION POINT: Error monitoring and recovery helper method
-    # This method provides robust error handling for Dynamixel motors during teleoperation
     def _check_and_handle_motor_errors(self):
-        """
-        Check for motor errors and attempt recovery if needed.
-        
-        This method is called periodically during teleoperation to monitor motor health
-        and attempt automatic recovery from common error conditions like overloads.
-        
-        The method is designed to be:
-        - Non-blocking: Quick checks with rate limiting
-        - Conservative: Only recovers from known safe error conditions
-        - Logged: All actions and decisions are clearly logged
-        """
-        if self.error_monitor is None:
-            return
-            
-        try:
-            # Check both leader and follower arms for errors
-            all_errors = {}
-            
-            # Check leader arms
-            for name, motor_bus in self.leader_arms.items():
-                if hasattr(motor_bus, 'read'):  # Ensure it's a Dynamixel bus
-                    errors = self.error_monitor.check_motor_errors(motor_bus)
-                    if errors:
-                        all_errors[f"leader_{name}"] = errors
-                        
-            # Check follower arms  
-            for name, motor_bus in self.follower_arms.items():
-                if hasattr(motor_bus, 'read'):  # Ensure it's a Dynamixel bus
-                    errors = self.error_monitor.check_motor_errors(motor_bus)
-                    if errors:
-                        all_errors[f"follower_{name}"] = errors
-            
-            # Handle any detected errors
-            if all_errors:
-                logging.warning(f"Motor errors detected: {all_errors}")
-                
-                # For overload errors, attempt automatic recovery
-                for arm_name, motor_errors in all_errors.items():
-                    for motor_name, error_status in motor_errors.items():
-                        if self.error_monitor.is_overload_error(error_status):
-                            logging.info(f"Overload detected on {arm_name}.{motor_name}, attempting recovery...")
-                            
-                            # Determine which motor bus to use
-                            if arm_name.startswith("leader_"):
-                                bus_name = arm_name[7:]  # Remove "leader_" prefix
-                                motor_bus = self.leader_arms.get(bus_name)
-                            elif arm_name.startswith("follower_"):
-                                bus_name = arm_name[9:]  # Remove "follower_" prefix  
-                                motor_bus = self.follower_arms.get(bus_name)
-                            else:
-                                continue
-                                
-                            if motor_bus is not None:
-                                recovery_success = self.error_monitor.attempt_motor_recovery(motor_bus, motor_name)
-                                if recovery_success:
-                                    logging.info(f"Successfully recovered {arm_name}.{motor_name}")
-                                else:
-                                    logging.warning(f"Failed to recover {arm_name}.{motor_name}")
-                        else:
-                            # For non-overload errors, just log them
-                            error_desc = self.error_monitor.get_error_description(error_status)
-                            logging.warning(f"Motor {arm_name}.{motor_name} has error: {error_desc}")
-                            
-        except Exception as e:
-            # Don't let error monitoring break teleoperation
-            logging.debug(f"Error during motor error check: {e}")
+        return  # legacy removed
 
     def capture_observation(self):
         """The returned observations do not have a batch dimension."""
@@ -732,8 +641,7 @@ class ManipulatorRobot:
             )
 
         # INTEGRATION POINT: Check for motor errors before sending actions
-        if self.error_monitor is not None:
-            self._check_and_handle_motor_errors()
+    # legacy error monitoring removed
 
         from_idx = 0
         to_idx = 0
@@ -762,8 +670,7 @@ class ManipulatorRobot:
                 self.follower_arms[name].write("Goal_Position", goal_pos)
             except Exception as e:
                 logging.error(f"Failed to send action to follower arm '{name}': {e}")
-                if self.error_monitor is not None:
-                    logging.info(f"Attempting error recovery for follower arm '{name}' during action send")
+                # legacy recovery removed
                     # Error recovery will be handled by the error monitor
                 raise  # Re-raise for now, but recovery attempt is logged
 

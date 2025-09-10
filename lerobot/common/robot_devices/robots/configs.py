@@ -55,10 +55,7 @@ class ManipulatorRobotConfig(RobotConfig):
     # gripper is not put in torque mode.
     gripper_open_degree: float | None = None
 
-    # INTEGRATION POINT: Enhanced error monitoring configuration
-    # Enable advanced Dynamixel motor error detection and recovery
-    # Set to False to disable error monitoring (useful for debugging or compatibility)
-    enable_error_monitoring: bool = True
+    # legacy error monitoring field removed
 
     mock: bool = False
 
@@ -106,8 +103,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
     max_relative_target: int | None = 25
     
-    # TEMPORARY: Disable error monitoring to debug leader-follower mismatch
-    enable_error_monitoring: bool = False
+    # legacy error monitoring removed
 
     # The duration of the velocity-based time profile
     # Higher values lead to smoother motions, but increase lag.
@@ -118,7 +114,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(
                 # window_x
-                port="/dev/ttyDXL_master_left",
+                port="/dev/ttyDXL_leader_left",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm430-w350"],
@@ -134,7 +130,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
             ),
             "right": DynamixelMotorsBusConfig(
                 # window_x
-                port="/dev/ttyDXL_master_right",
+                port="/dev/ttyDXL_leader_right",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm430-w350"],
@@ -154,7 +150,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(
-                port="/dev/ttyDXL_puppet_left",
+                port="/dev/ttyDXL_follower_left",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm540-w270"],
@@ -169,7 +165,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
                 },
             ),
             "right": DynamixelMotorsBusConfig(
-                port="/dev/ttyDXL_puppet_right",
+                port="/dev/ttyDXL_follower_right",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm540-w270"],

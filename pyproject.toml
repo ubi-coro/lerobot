@@ -44,6 +44,10 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.10",
 ]
+
+[tool.setuptools.packages.find]
+include = ["lerobot*", "web*"]
+
 dependencies = [
     "cmake>=3.29.0.1",
     "datasets>=2.19.0",
@@ -77,12 +81,12 @@ dependencies = [
 
 [project.scripts]
 # LeRobot Web GUI CLI Commands
-lerobot-gui = "lerobot.web.scripts.cli:gui_main"
-lerobot-gui-dev = "lerobot.web.scripts.cli:dev_main"
-lerobot-gui-backend = "lerobot.web.scripts.cli:backend_main"
-lerobot-gui-frontend = "lerobot.web.scripts.cli:frontend_main"
-lerobot-gui-shortcut = "lerobot.web.scripts.cli:create_shortcut_main"
-lerobot-gui-status = "lerobot.web.scripts.cli:status_main"
+lerobot-gui = "web.scripts.cli:gui_main"
+lerobot-gui-dev = "web.scripts.cli:dev_main"
+lerobot-gui-backend = "web.scripts.cli:backend_main"
+lerobot-gui-frontend = "web.scripts.cli:frontend_main"
+lerobot-gui-shortcut = "web.scripts.cli:create_shortcut_main"
+lerobot-gui-status = "web.scripts.cli:status_main"
 
 [project.optional-dependencies]
 aloha = ["gym-aloha>=0.1.1 ; python_version < '4.0'"]

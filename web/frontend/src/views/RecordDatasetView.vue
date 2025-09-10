@@ -1,6 +1,9 @@
 <template>
   <div class="record-dataset-view">
-    <h1>Dataset Recording</h1>
+    <h4>Instruction:</h4>
+    <h6>
+        Under Construction
+    </h6>
     <div class="layout">
       <section class="config" :class="{ disabled: isActive }">
         <h2>Configuration</h2>

@@ -49,9 +49,6 @@ class RobotService:
                 calibration_dir=calibration_dir,
                 max_relative_target=25,  # LeRobot default for safety
                 moving_time=0.1,  # Critical ALOHA parameter for smooth motion
-                # INTEGRATION POINT: Error monitoring is enabled by default
-                # Can be disabled by setting enable_error_monitoring=False here
-                enable_error_monitoring=True,  # Enable robust motor error handling
                 mock=self.use_mock
             )
 

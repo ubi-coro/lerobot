@@ -1,11 +1,10 @@
 <template>
   <div class="teleoperation-view">
-    <div class="page-header">
-      <!-- Replaced large heading with concise left-aligned contextual intro -->
-      <p class="page-intro">
-        <strong>Instruction:</strong> Configure how you want to control the robot (bimanual or single arm), choose the environment, and optional external data display. Press <em>Start Teleoperation</em> to begin; hit the <kbd>Space</kbd> bar anytime for an emergency stop.
-      </p>
-    </div>
+    <h4>Instruction:</h4>
+    <h6>
+      Configure how you want to control the robot (bimanual or single arm), choose the environment, and optional external data display. Press <em>Start Teleoperation</em> to begin; hit the <kbd>Space</kbd> bar anytime for an emergency stop.
+    </h6>
+    
 
   <!-- Connection status card removed: dashboard handles connection -->
 
@@ -376,7 +375,7 @@ onUnmounted(() => {
 .teleoperation-view {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 1.5rem; /* align with recording view */
 }
 
 .page-header {
@@ -414,10 +413,10 @@ onUnmounted(() => {
 
 .config-card {
   background: white;
-  border-radius: 1rem;
-  padding: 2rem;
+  border-radius: 14px; /* match recording section radius */
+  padding: 1.1rem 1.35rem 1.25rem; /* match recording section padding */
   border: 1px solid #e5e7eb;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); /* closer to recording subtle shadow */
 }
 
 .config-card h3 {
@@ -427,8 +426,8 @@ onUnmounted(() => {
 
 .config-grid {
   display: grid;
-  gap: 2rem;
-  margin-bottom: 2rem;
+  gap: 1.5rem; /* reduced to feel like tighter layout */
+  margin-bottom: 1.4rem;
 }
 
 .config-group {
@@ -446,17 +445,17 @@ onUnmounted(() => {
 .mode-selector {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+  gap: 0.85rem; /* slightly tighter */
 }
 
 .mode-btn {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 1rem;
+  gap: 0.9rem;
+  padding: 0.85rem 0.9rem; /* slightly reduced */
   background: white;
   border: 2px solid #e5e7eb;
-  border-radius: 0.75rem;
+  border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -496,7 +495,7 @@ onUnmounted(() => {
 /* Environment Selector */
 .env-selector {
   display: flex;
-  gap: 1rem;
+  gap: 0.85rem;
 }
 
 .env-btn {
@@ -504,11 +503,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
-  padding: 1rem;
+  gap: 0.45rem;
+  padding: 0.85rem 0.9rem;
   background: white;
   border: 2px solid #e5e7eb;
-  border-radius: 0.75rem;
+  border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s ease;
   color: #111827;
@@ -548,10 +547,10 @@ onUnmounted(() => {
   position: relative;
   display: block;
   cursor: pointer;
-  padding: 0.85rem 1rem 1.2rem 2.75rem; /* left space for centered checkbox */
+  padding: 0.75rem 0.85rem 1.05rem 2.5rem; /* proportionally reduced */
   background: #f9fafb;
   border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
+  border-radius: 10px;
   transition: all 0.2s ease;
   line-height: 1.1;
 }
@@ -592,10 +591,10 @@ onUnmounted(() => {
 /* Operation Status */
 .operation-status {
   background: white;
-  border-radius: 1rem;
-  padding: 1.5rem;
+  border-radius: 14px;
+  padding: 1.1rem 1.35rem 1.25rem;
   border: 1px solid #e5e7eb;
-  margin-bottom: 2rem;
+  margin-bottom: 1.75rem;
 }
 
 .status-grid {
@@ -627,8 +626,8 @@ onUnmounted(() => {
 /* Camera Section */
 .camera-section {
   background: white;
-  border-radius: 1rem;
-  padding: 2rem;
+  border-radius: 14px;
+  padding: 1.1rem 1.35rem 1.25rem;
   border: 1px solid #e5e7eb;
 }
 
