@@ -56,9 +56,10 @@ except Exception:  # pragma: no cover - optional
     aloha_state = None
 
 try:
-    from .robot import robot_service  # type: ignore
+    # Import the module, not the variable, to avoid stale references.
+    from . import robot as robot_module  # type: ignore
 except Exception:  # pragma: no cover
-    robot_service = None
+    robot_module = None
 
 try:
     import shared  # global Socket.IO accessor
@@ -118,6 +119,10 @@ class RecordingWorkerState:
         self.total_frames: int = 0
         self.episode_frames: int = 0
         self.episode_start_t: float | None = None
+        # Phase tracking (for countdown progress): one of "idle","warmup","recording","resetting","transition"
+        self.phase: str = "idle"
+        self.phase_start_t: float | None = None
+        self.phase_total_s: float | None = None
         self.status_lock = threading.Lock()
         self.last_status: Dict[str, Any] = {}
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -129,6 +134,9 @@ class RecordingWorkerState:
             episode_elapsed = None
             if self.episode_start_t is not None:
                 episode_elapsed = now - self.episode_start_t
+            phase_elapsed = None
+            if self.phase_start_t is not None:
+                phase_elapsed = now - self.phase_start_t
             return {
                 "active": self.active,
                 "episode_index": self.episode_index,
@@ -144,12 +152,22 @@ class RecordingWorkerState:
                 "fps_current": (
                     (self.episode_frames / episode_elapsed) if episode_elapsed and episode_elapsed > 0 else None
                 ),
-                "state": (
-                    "recording_episode"
-                    if self.active and self.events and not self.events.get("exit_early", False)
-                    else ("idle" if not self.active else "transition")
-                ),
+                # Phase & countdown support for UI
+                "phase": self.phase,
+                "phase_elapsed_s": phase_elapsed,
+                "phase_total_s": self.phase_total_s,
+                # Keep legacy 'state' for compatibility but align with phase
+                "state": self.phase if self.active or self.phase != "idle" else "idle",
             }
+
+    def _event_flag(self, key: str) -> bool:
+        try:
+            if self.events is None:
+                return False
+            # ApiEventAdapter supports dict-like access
+            return bool(self.events[key])
+        except Exception:
+            return False
 
 
 recording_worker = RecordingWorkerState()
@@ -165,15 +183,21 @@ def _get_robot_instance():
                 return robot, False
         except Exception:  # pragma: no cover
             pass
-    # Robot service reuse
-    if robot_service and getattr(robot_service, "robot", None) is not None:
-        robot = robot_service.robot
+    # Robot service reuse (access dynamically from module to avoid stale import)
+    if robot_module and getattr(robot_module, "robot_service", None) is not None:
+        robot = getattr(robot_module, "robot_service").robot
         try:
             if robot and robot.is_connected:
+                # Log basic diagnostics about cameras
+                try:
+                    cam_count = len(getattr(robot, "cameras", {}) or {})
+                    logger.info("Robot instance ready (type=%s, cameras=%d)", getattr(robot, "robot_type", "?"), cam_count)
+                except Exception:
+                    pass
                 return robot, False
         except Exception:  # pragma: no cover
             pass
-    # Otherwise fail (Phase 1: no autonomous robot creation here)
+    # Otherwise fail (no autonomous robot creation here)
     raise RuntimeError(
         "No connected robot available. Connect via teleoperation or robot endpoint before starting recording."
     )
@@ -189,21 +213,51 @@ def start_recording_via_api(config: Dict[str, Any]):
     if missing:
         raise ValueError(f"Missing required config fields: {missing}")
 
+    # Sanitize numeric fields to avoid None-related crashes (e.g., coming from JSON null)
+    def _num(x, default=None):
+        return default if x is None else x
+
+    def _pos_int(x, default=None):
+        try:
+            return int(x)
+        except Exception:
+            return default
+
+    def _pos_float(x, default=None):
+        try:
+            # Accept ints or strings that represent numbers
+            return float(x)
+        except Exception:
+            return default
+
+    warmup_time_s = _pos_float(config.get("warmup_time_s"), 10.0)
+    episode_time_s = _pos_float(config.get("episode_time_s"), 30.0)
+    reset_time_s = _pos_float(config.get("reset_time_s"), 10.0)
+    fps_val = config.get("fps")
+    if fps_val is None:
+        raise ValueError("fps must be provided and non-null")
+    fps_val = _pos_int(fps_val, None)
+    if fps_val is None or fps_val <= 0:
+        raise ValueError(f"Invalid fps value: {config.get('fps')} (must be a positive integer)")
+
+    num_img_writer_proc = _pos_int(config.get("num_image_writer_processes", 0), 0)
+    num_img_writer_threads_per_cam = _pos_int(config.get("num_image_writer_threads_per_camera", 4), 4)
+
     # Build RecordControlConfig (Phase 1 subset) with defaults for unspecified values
     cfg = RecordControlConfig(
         repo_id=config["repo_id"],
         single_task=config["single_task"],
-        fps=config.get("fps"),
-        warmup_time_s=config.get("warmup_time_s", 2),
-        episode_time_s=config.get("episode_time_s", 30),
-        reset_time_s=config.get("reset_time_s", 10),
+        fps=fps_val,
+        warmup_time_s=warmup_time_s,
+        episode_time_s=episode_time_s,
+        reset_time_s=reset_time_s,
         num_episodes=config.get("num_episodes", 1),
         video=config.get("video", True),
         push_to_hub=config.get("push_to_hub", False),
         private=config.get("private", False),
         tags=config.get("tags"),
-        num_image_writer_processes=config.get("num_image_writer_processes", 0),
-        num_image_writer_threads_per_camera=config.get("num_image_writer_threads_per_camera", 4),
+        num_image_writer_processes=num_img_writer_proc,
+        num_image_writer_threads_per_camera=num_img_writer_threads_per_cam,
         display_data=config.get("display_data", False),
         play_sounds=False,
         resume=config.get("resume", False),
@@ -230,11 +284,41 @@ def start_recording_via_api(config: Dict[str, Any]):
     recording_worker.total_frames = 0
     recording_worker.episode_frames = 0
     recording_worker.episode_start_t = None
+    with recording_worker.status_lock:
+        recording_worker.phase = "transition"
+        recording_worker.phase_start_t = None
+        recording_worker.phase_total_s = None
 
     # Worker function replicating record() orchestration with adapter
     def _worker():
         try:
             # Create or load dataset
+            # Handle existing root directory edge-cases early
+            try:
+                from pathlib import Path
+                root_path = Path(cfg.root) if cfg.root is not None else None
+                if root_path and root_path.exists():
+                    if not cfg.resume:
+                        # If empty directory, remove it so LeRobot can create it
+                        if root_path.is_dir() and not any(root_path.iterdir()):
+                            try:
+                                root_path.rmdir()
+                                logger.info("Removed empty dataset root to allow creation: %s", root_path)
+                            except Exception:
+                                pass
+                        else:
+                            # If it looks like an existing dataset, auto-switch to resume
+                            if (root_path / "meta" / "info.json").exists():
+                                logger.info("Existing dataset detected at %s; switching to resume mode", root_path)
+                                cfg.resume = True
+                            else:
+                                raise RuntimeError(
+                                    f"Dataset root exists and is not empty: {root_path}. "
+                                    "Choose a different root or enable Resume."
+                                )
+            except Exception as pre_e:
+                raise
+
             if cfg.resume:
                 dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
                 if len(robot.cameras) > 0:
@@ -271,9 +355,29 @@ def start_recording_via_api(config: Dict[str, Any]):
             if not robot.is_connected:
                 robot.connect()
 
+            # Proactive camera preflight to surface RealSense issues early and clearly
+            try:
+                # Guard against None: pick a safe timeout derived from warmup or a minimum window
+                warmup_timeout = cfg.warmup_time_s if cfg.warmup_time_s is not None else 10
+                try:
+                    warmup_timeout_int = int(warmup_timeout)
+                except Exception:
+                    warmup_timeout_int = 10
+                _preflight_cameras(robot, timeout_s=min(10, max(3, warmup_timeout_int)))
+            except Exception as cam_e:
+                raise RuntimeError(
+                    f"Camera preflight failed: {cam_e}. "
+                    "Verify your Intel RealSense cameras stream frames (try 'realsense-viewer'), "
+                    "ensure USB3 ports and cables, and that no other process is using the cameras."
+                )
+
             # Warmup
             enable_teleoperation = True
             log_say("Warmup record", cfg.play_sounds)
+            with recording_worker.status_lock:
+                recording_worker.phase = "warmup"
+                recording_worker.phase_total_s = float(cfg.warmup_time_s or 0)
+                recording_worker.phase_start_t = time.perf_counter()
             warmup_record(
                 robot,
                 events,
@@ -292,6 +396,9 @@ def start_recording_via_api(config: Dict[str, Any]):
                 with recording_worker.status_lock:
                     recording_worker.episode_frames = 0
                     recording_worker.episode_start_t = time.perf_counter()
+                    recording_worker.phase = "recording"
+                    recording_worker.phase_total_s = float(cfg.episode_time_s or 0)
+                    recording_worker.phase_start_t = recording_worker.episode_start_t
 
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_episode(
@@ -312,6 +419,10 @@ def start_recording_via_api(config: Dict[str, Any]):
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
                     events.reset()
+                    with recording_worker.status_lock:
+                        recording_worker.phase = "resetting"
+                        recording_worker.phase_total_s = float(cfg.reset_time_s or 0)
+                        recording_worker.phase_start_t = time.perf_counter()
                     reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
                 if events["rerecord_episode"]:
@@ -319,18 +430,35 @@ def start_recording_via_api(config: Dict[str, Any]):
                     dataset.clear_episode_buffer()
                     continue
 
-                if len(dataset) > 0:
+                # Use episode_buffer size to determine if we captured any frames in this episode
+                ep_size = 0
+                try:
+                    ep_size = int(getattr(dataset, "episode_buffer", {}).get("size", 0))
+                except Exception:
+                    ep_size = 0
+
+                if ep_size > 0:
                     if cfg.save_eval:
+                        # Indicate processing while saving episode (encoding, parquet, etc.)
+                        with recording_worker.status_lock:
+                            recording_worker.phase = "processing"
+                            recording_worker.phase_total_s = None
+                            recording_worker.phase_start_t = time.perf_counter()
                         dataset.save_episode()
                     recording_worker.episode_index += 1
                 else:
-                    log_say("Dataset is empty, re-record episode", cfg.play_sounds)
+                    log_say("No frames captured this episode, re-recording", cfg.play_sounds)
 
             log_say("Stop recording", cfg.play_sounds, blocking=True)
             core_stop_recording(robot, None, cfg.display_data)
 
             if cfg.push_to_hub:
                 try:
+                    # Indicate pushing phase without duration
+                    with recording_worker.status_lock:
+                        recording_worker.phase = "pushing"
+                        recording_worker.phase_total_s = None
+                        recording_worker.phase_start_t = time.perf_counter()
                     dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
                 except Exception as e:  # pragma: no cover
                     logger.warning(f"Push to hub failed: {e}")
@@ -348,6 +476,9 @@ def start_recording_via_api(config: Dict[str, Any]):
         finally:
             with recording_worker.status_lock:
                 recording_worker.active = False
+                recording_worker.phase = "idle"
+                recording_worker.phase_start_t = None
+                recording_worker.phase_total_s = None
             # Final status emit
             sio = shared.get_socketio() if shared else None
             if sio:
@@ -370,19 +501,7 @@ def stop_recording_via_api():
         recording_worker.events.set_flag("exit_early", True)
 
 
-def command_recording(action: str):
-    if not recording_worker.active or not recording_worker.events:
-        raise RuntimeError("No active recording session")
-    ev = recording_worker.events
-    if action == "rerecord_episode":
-        ev.set_flag("rerecord_episode", True)
-        ev.set_flag("exit_early", True)
-    elif action == "skip_episode":
-        ev.set_flag("exit_early", True)
-    elif action == "stop":
-        stop_recording_via_api()
-    else:
-        raise ValueError(f"Unknown recording command: {action}")
+## removed duplicate command_recording (see consolidated version below)
 
 
 def _schedule_coro(coro):
@@ -393,6 +512,44 @@ def _schedule_coro(coro):
             asyncio.run_coroutine_threadsafe(coro, loop)
     except RuntimeError:
         pass
+
+
+def _preflight_cameras(robot, timeout_s: int = 6):
+    """Try to start camera streams and receive first frame within timeout.
+
+    Raises with a clear error if frames don't arrive, to avoid cryptic thread errors later.
+    """
+    cams = getattr(robot, "cameras", {}) or {}
+    if not cams:
+        logger.warning("No cameras found on robot; proceeding without visual data.")
+        return
+
+    start = time.perf_counter()
+    for name, cam in cams.items():
+        try:
+            # Ensure camera connected and fps set
+            if not getattr(cam, "is_connected", False):
+                cam.connect()
+            # Kick off background reader and wait for first frame
+            # Note: async_read() itself blocks until first frame or raises after ~1s*fps
+            cam.async_read()
+        except Exception as e:
+            raise RuntimeError(f"Camera '{name}' failed to start: {e}")
+
+    # All cams kicked; do a brief wait loop to ensure at least one frame arrived
+    while time.perf_counter() - start < timeout_s:
+        ready = True
+        for name, cam in cams.items():
+            if getattr(cam, "color_image", None) is None:
+                ready = False
+                break
+        if ready:
+            return
+        time.sleep(0.1)
+
+    # If here, at least one cam never produced a frame
+    missing = [name for name, cam in cams.items() if getattr(cam, "color_image", None) is None]
+    raise RuntimeError(f"No frames received within {timeout_s}s from cameras: {missing}")
 
 
 async def _status_emitter_task(interval: float = 0.5):
@@ -416,15 +573,62 @@ def init_recording_worker(loop: asyncio.AbstractEventLoop):
     loop.create_task(_status_emitter_task())
 
 
+def stop_recording_via_api():
+    """Stop recording via API call"""
+    if recording_worker.active and recording_worker.events:
+        recording_worker.events.set_flag("stop_recording", True)
+        logger.info("Recording stop requested via API")
+
+
+def command_recording(action: str):
+    """Handle recording commands via API"""
+    if not recording_worker.active or not recording_worker.events:
+        logger.warning(f"Recording command '{action}' ignored - no active recording")
+        return
+    
+    if action == "exit_early":
+        recording_worker.events.set_flag("exit_early", True)
+        logger.info("Exit early command received")
+    elif action == "rerecord_episode":
+        recording_worker.events.set_flag("rerecord_episode", True)
+        recording_worker.events.set_flag("exit_early", True)
+        logger.info("Rerecord episode command received")
+    elif action == "skip_episode":
+        recording_worker.events.set_flag("exit_early", True)
+        logger.info("Skip episode command received")
+    elif action == "stop":
+        recording_worker.events.set_flag("stop_recording", True)
+        recording_worker.events.set_flag("exit_early", True)
+        logger.info("Stop recording command received (exit_early also set)")
+    else:
+        logger.warning(f"Unknown recording command: {action}")
+
+
+## removed duplicate helper and emitter definitions (see earlier implementations)
+
+
 # Socket.IO event handler registration helpers
 def register_socketio_handlers(sio):
+    logger.info("Registering Socket.IO handlers for recording worker")
     @sio.event
     async def start_recording(sid, data):  # type: ignore
         try:
+            logger.info(f"start_recording event received from {sid} with payload: {data}")
             start_recording_via_api(data or {})
-            await sio.emit("recording_status", recording_worker.snapshot(), room=sid)
-            await sio.emit("recording_started", {"ok": True}, room=sid)
+            # Emit in two steps to pinpoint any serialization issues
+            try:
+                await sio.emit("recording_status", recording_worker.snapshot(), room=sid)
+            except Exception as se:
+                logger.error("start_recording status emit failed", exc_info=True)
+                await sio.emit("recording_error", {"error": f"status_emit_failed: {se}"}, room=sid)
+                return
+            try:
+                await sio.emit("recording_started", {"ok": True}, room=sid)
+            except Exception as se:
+                logger.error("start_recording started emit failed", exc_info=True)
+                await sio.emit("recording_error", {"error": f"started_emit_failed: {se}"}, room=sid)
         except Exception as e:
+            logger.error("start_recording error", exc_info=True)
             await sio.emit("recording_error", {"error": str(e)}, room=sid)
 
     @sio.event
@@ -436,7 +640,9 @@ def register_socketio_handlers(sio):
     async def recording_command(sid, data):  # type: ignore
         try:
             action = (data or {}).get("action")
+            logger.info(f"recording_command event '{action}' from {sid}")
             command_recording(action)
             await sio.emit("recording_status", recording_worker.snapshot())
         except Exception as e:
+            logger.error(f"recording_command error: {e}")
             await sio.emit("recording_error", {"error": str(e)})

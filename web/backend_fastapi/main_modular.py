@@ -48,18 +48,8 @@ logger = logging.getLogger(__name__)
 
 service_bridge = None  # legacy bridge removed
 
-# Import module routers
-try:
-    from modules.robot import router as robot_router
-    from modules.aloha_teleoperation import router as aloha_teleoperation_router
-    from modules.safety import router as safety_router
-    from modules.monitoring import router as monitoring_router
-    from modules.recording import router as recording_router
-    from modules.configuration import router as configuration_router
-    logger.info("✅ All modules imported successfully")
-except ImportError as e:
-    logger.error(f"❌ Failed to import modules: {e}")
-    raise
+# Import shared module for Socket.IO access
+import shared
 
 # Create modular FastAPI application
 app = FastAPI(
@@ -75,6 +65,7 @@ app = FastAPI(
     - **Monitoring**: Performance tracking and analytics
     - **Recording**: Dataset management and episode recording
     - **Configuration**: Advanced preset and settings management
+    - **Dataset**: Directory browsing and dataset visualization
     
     ## Features
     
@@ -104,14 +95,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include module routers with their prefixes
-app.include_router(robot_router)
-app.include_router(aloha_teleoperation_router)
-app.include_router(safety_router)
-app.include_router(monitoring_router)
-app.include_router(recording_router)
-app.include_router(configuration_router)
-
 # Socket.IO server with CORS support
 sio = socketio.AsyncServer(
     async_mode='asgi',
@@ -126,6 +109,37 @@ sio = socketio.AsyncServer(
     logger=True,
     engineio_logger=False  # Reduce log noise
 )
+
+# Set shared Socket.IO instance for modules that need it
+shared.set_socketio(sio)
+
+# Import module routers AFTER Socket.IO is set up
+try:
+    from modules.robot import router as robot_router
+    from modules.aloha_teleoperation import router as aloha_teleoperation_router
+    from modules.safety import router as safety_router
+    from modules.monitoring import router as monitoring_router
+    from modules.recording import router as recording_router
+    from modules.configuration import router as configuration_router
+    from modules.dataset import router as dataset_router
+    # Import recording worker for Socket.IO handlers
+    from modules.recording_worker import register_socketio_handlers, init_recording_worker
+    logger.info("✅ All modules imported successfully")
+except ImportError as e:
+    logger.error(f"❌ Failed to import modules: {e}")
+    raise
+
+# Include module routers with their prefixes
+app.include_router(robot_router)
+app.include_router(aloha_teleoperation_router)
+app.include_router(safety_router)
+app.include_router(monitoring_router)
+app.include_router(recording_router)
+app.include_router(configuration_router)
+app.include_router(dataset_router, prefix="/api/dataset")
+
+# Register recording worker Socket.IO handlers
+register_socketio_handlers(sio)
 
 # Create Socket.IO ASGI app
 socket_app = socketio.ASGIApp(sio, app)
@@ -150,7 +164,7 @@ async def connect(sid, environ):
     await sio.emit('connected', {
         'status': 'success',
         'message': 'Connected to LeRobot modular backend',
-        'modules': ['robot', 'teleoperation', 'safety', 'monitoring', 'recording', 'configuration'],
+        'modules': ['robot', 'teleoperation', 'safety', 'monitoring', 'recording', 'configuration', 'dataset'],
         'api_docs': '/api/docs'
     }, room=sid)
     
@@ -249,7 +263,7 @@ async def health_check():
         status="success",
         message="All systems operational",
         data={
-            "modules_loaded": 6,
+            "modules_loaded": 7,
             "socket_clients": len(connected_clients),
             "service_bridge": False
         }
@@ -294,6 +308,12 @@ async def get_modules():
             "prefix": "/api/configuration",
             "description": "Advanced preset and settings management",
             "endpoints": ["presets", "profiles", "config", "backup"]
+        },
+        {
+            "name": "dataset",
+            "prefix": "/api/dataset",
+            "description": "Directory browsing and dataset visualization",
+            "endpoints": ["browse", "browse-directory", "visualize", "count"]
         }
     ]
     
@@ -327,6 +347,17 @@ async def startup_event():
     # legacy bridge removed
     
     logger.info("✅ Backend initialization complete")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on application startup"""
+    logger.info("🚀 Starting LeRobot Modular FastAPI Backend")
+    
+    # Initialize recording worker with event loop
+    loop = asyncio.get_event_loop()
+    init_recording_worker(loop)
+    
+    logger.info("✅ All services initialized")
 
 @app.on_event("shutdown")
 async def shutdown_event():

@@ -184,10 +184,14 @@ async def browse_directory(request: DirectoryBrowseRequest):
         # Sort folders alphabetically
         folders.sort(key=lambda x: x['name'].lower())
         
+        # Get mount/drive information for better navigation
+        mount_info = _get_mount_info()
+        
         return {
             "path": str(path),
             "folders": folders,
-            "total": len(folders)
+            "total": len(folders),
+            "mounts": mount_info
         }
         
     except HTTPException:
@@ -329,3 +333,435 @@ async def stop_visualization():
         "status": "stopped",
         "message": f"Stopped {stopped_count} visualization processes"
     }
+
+
+def _get_mount_info() -> Dict[str, Any]:
+    """Get information about mounted drives and filesystems (Cross-platform)"""
+    try:
+        mounts = []
+        import platform
+        
+        system = platform.system().lower()
+        
+        if system == "linux":
+            mounts = _get_mounts_linux()
+        elif system == "windows":
+            mounts = _get_mounts_windows()
+        elif system == "darwin":  # macOS
+            mounts = _get_mounts_macos()
+        else:
+            # Fallback for other systems
+            mounts = _get_mounts_generic()
+        
+        # Sort by mount point
+        mounts.sort(key=lambda x: x['mount_point'])
+        
+        return {
+            "mounts": mounts,
+            "total_mounts": len(mounts),
+            "system": system,
+            "common_paths": _get_common_paths(system)
+        }
+        
+    except Exception as e:
+        # Return basic info if mount detection fails
+        return {
+            "mounts": [],
+            "total_mounts": 0,
+            "error": str(e),
+            "common_paths": _get_common_paths(platform.system().lower())
+        }
+
+
+def _get_mounts_linux():
+    """Get mount information for Linux systems"""
+    mounts = []
+    
+    try:
+        # Read /proc/mounts for mount information
+        with open('/proc/mounts', 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 3:
+                    device, mount_point, fs_type = parts[0], parts[1], parts[2]
+                    
+                    # Skip virtual filesystems and common system mounts
+                    skip_fs_types = ['proc', 'sysfs', 'devtmpfs', 'devpts', 'tmpfs', 'cgroup', 'pstore', 'debugfs', 'hugetlbfs', 'securityfs', 'cgroup2', 'bpf', 'fusectl', 'configfs', 'tracefs']
+                    if fs_type in skip_fs_types:
+                        continue
+                    
+                    # Skip /proc, /sys, /dev mounts but allow others
+                    skip_mounts = ['/proc', '/sys', '/dev', '/run']
+                    if any(mount_point.startswith(skip) for skip in skip_mounts):
+                        continue
+                    
+                    try:
+                        mount_path = Path(mount_point)
+                        if mount_path.exists() and mount_path.is_dir():
+                            # Get disk usage information
+                            statvfs = os.statvfs(mount_point)
+                            total_bytes = statvfs.f_blocks * statvfs.f_frsize
+                            available_bytes = statvfs.f_bavail * statvfs.f_frsize
+                            used_bytes = total_bytes - available_bytes
+                            
+                            mounts.append({
+                                "device": device,
+                                "mount_point": mount_point,
+                                "filesystem": fs_type,
+                                "total_gb": round(total_bytes / (1024**3), 1),
+                                "used_gb": round(used_bytes / (1024**3), 1),
+                                "available_gb": round(available_bytes / (1024**3), 1),
+                                "usage_percent": round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                            })
+                    except (OSError, PermissionError):
+                        # Skip mounts we can't access
+                        continue
+    except Exception:
+        pass
+    
+    return mounts
+
+
+def _get_mounts_windows():
+    """Get mount information for Windows systems"""
+    mounts = []
+    
+    try:
+        import subprocess
+        # Use wmic to get drive information
+        result = subprocess.run(['wmic', 'logicaldisk', 'get', 'name,filesystem,size,freespace', '/format:csv'], 
+                              capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            for line in lines[1:]:  # Skip header
+                parts = line.split(',')
+                if len(parts) >= 4:
+                    drive_letter = parts[1].strip()
+                    fs_type = parts[2].strip()
+                    size_str = parts[3].strip()
+                    free_str = parts[4].strip()
+                    
+                    try:
+                        total_bytes = int(size_str) if size_str else 0
+                        free_bytes = int(free_str) if free_str else 0
+                        used_bytes = total_bytes - free_bytes
+                        
+                        if total_bytes > 0:
+                            mounts.append({
+                                "device": drive_letter,
+                                "mount_point": f"{drive_letter}:\\",
+                                "filesystem": fs_type,
+                                "total_gb": round(total_bytes / (1024**3), 1),
+                                "used_gb": round(used_bytes / (1024**3), 1),
+                                "available_gb": round(free_bytes / (1024**3), 1),
+                                "usage_percent": round((used_bytes / total_bytes) * 100, 1)
+                            })
+                    except (ValueError, ZeroDivisionError):
+                        continue
+    except Exception:
+        pass
+    
+    return mounts
+
+
+def _get_mounts_macos():
+    """Get mount information for macOS systems"""
+    mounts = []
+    
+    try:
+        import subprocess
+        # Use diskutil for macOS
+        result = subprocess.run(['diskutil', 'list'], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            # Parse diskutil output (simplified)
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
+                if line.startswith('/dev/'):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        device = parts[0]
+                        mount_point = parts[-1] if len(parts) > 1 else ""
+                        
+                        if mount_point and mount_point.startswith('/'):
+                            try:
+                                mount_path = Path(mount_point)
+                                if mount_path.exists() and mount_path.is_dir():
+                                    statvfs = os.statvfs(mount_point)
+                                    total_bytes = statvfs.f_blocks * statvfs.f_frsize
+                                    available_bytes = statvfs.f_bavail * statvfs.f_frsize
+                                    used_bytes = total_bytes - available_bytes
+                                    
+                                    mounts.append({
+                                        "device": device,
+                                        "mount_point": mount_point,
+                                        "filesystem": "apfs",  # Assume APFS for macOS
+                                        "total_gb": round(total_bytes / (1024**3), 1),
+                                        "used_gb": round(used_bytes / (1024**3), 1),
+                                        "available_gb": round(available_bytes / (1024**3), 1),
+                                        "usage_percent": round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                                    })
+                            except (OSError, PermissionError):
+                                continue
+    except Exception:
+        pass
+    
+    return mounts
+
+
+def _get_mounts_generic():
+    """Generic mount detection fallback"""
+    mounts = []
+    
+    # Try to detect common mount points
+    common_mounts = ['/', '/home', '/usr', '/var', '/tmp']
+    
+    for mount_point in common_mounts:
+        try:
+            mount_path = Path(mount_point)
+            if mount_path.exists() and mount_path.is_dir():
+                statvfs = os.statvfs(mount_point)
+                total_bytes = statvfs.f_blocks * statvfs.f_frsize
+                available_bytes = statvfs.f_bavail * statvfs.f_frsize
+                used_bytes = total_bytes - available_bytes
+                
+                mounts.append({
+                    "device": "unknown",
+                    "mount_point": mount_point,
+                    "filesystem": "unknown",
+                    "total_gb": round(total_bytes / (1024**3), 1),
+                    "used_gb": round(used_bytes / (1024**3), 1),
+                    "available_gb": round(available_bytes / (1024**3), 1),
+                    "usage_percent": round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                })
+        except (OSError, PermissionError, AttributeError):
+            continue
+    
+    return mounts
+
+
+def _get_common_paths(system: str):
+    """Get common paths for different operating systems"""
+    if system == "windows":
+        return [
+            {"name": "Home", "path": str(Path.home()), "description": "User home directory"},
+            {"name": "Desktop", "path": str(Path.home() / "Desktop"), "description": "Desktop folder"},
+            {"name": "Documents", "path": str(Path.home() / "Documents"), "description": "Documents folder"},
+            {"name": "C:", "path": "C:\\", "description": "System drive"},
+            {"name": "Data", "path": str(Path.home() / "data"), "description": "Data directory"}
+        ]
+    elif system == "darwin":  # macOS
+        return [
+            {"name": "Home", "path": str(Path.home()), "description": "User home directory"},
+            {"name": "Desktop", "path": str(Path.home() / "Desktop"), "description": "Desktop folder"},
+            {"name": "Documents", "path": str(Path.home() / "Documents"), "description": "Documents folder"},
+            {"name": "Root", "path": "/", "description": "System root"},
+            {"name": "Volumes", "path": "/Volumes", "description": "Mounted volumes"}
+        ]
+    else:  # Linux and others
+        return [
+            {"name": "Home", "path": str(Path.home()), "description": "User home directory"},
+            {"name": "Root", "path": "/", "description": "System root"},
+            {"name": "Media", "path": "/media", "description": "Removable media"},
+            {"name": "Mount", "path": "/mnt", "description": "Additional mounts"},
+            {"name": "Data", "path": "/data", "description": "Data directory"},
+            {"name": "Datasets", "path": str(Path.home() / "datasets"), "description": "User datasets"}
+        ]
+
+
+def _get_mounts_linux():
+    """Get mount information for Linux systems"""
+    mounts = []
+    
+    try:
+        # Read /proc/mounts for mount information
+        with open('/proc/mounts', 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 3:
+                    device, mount_point, fs_type = parts[0], parts[1], parts[2]
+                    
+                    # Skip virtual filesystems and common system mounts
+                    skip_fs_types = ['proc', 'sysfs', 'devtmpfs', 'devpts', 'tmpfs', 'cgroup', 'pstore', 'debugfs', 'hugetlbfs', 'securityfs', 'cgroup2', 'bpf', 'fusectl', 'configfs', 'tracefs']
+                    if fs_type in skip_fs_types:
+                        continue
+                    
+                    # Skip /proc, /sys, /dev mounts but allow others
+                    skip_mounts = ['/proc', '/sys', '/dev', '/run']
+                    if any(mount_point.startswith(skip) for skip in skip_mounts):
+                        continue
+                    
+                    try:
+                        mount_path = Path(mount_point)
+                        if mount_path.exists() and mount_path.is_dir():
+                            # Get disk usage information
+                            statvfs = os.statvfs(mount_point)
+                            total_bytes = statvfs.f_blocks * statvfs.f_frsize
+                            available_bytes = statvfs.f_bavail * statvfs.f_frsize
+                            used_bytes = total_bytes - available_bytes
+                            
+                            mounts.append({
+                                "device": device,
+                                "mount_point": mount_point,
+                                "filesystem": fs_type,
+                                "total_gb": round(total_bytes / (1024**3), 1),
+                                "used_gb": round(used_bytes / (1024**3), 1),
+                                "available_gb": round(available_bytes / (1024**3), 1),
+                                "usage_percent": round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                            })
+                    except (OSError, PermissionError):
+                        # Skip mounts we can't access
+                        continue
+    except Exception:
+        pass
+    
+    return mounts
+
+
+def _get_mounts_windows():
+    """Get mount information for Windows systems"""
+    mounts = []
+    
+    try:
+        import subprocess
+        # Use wmic to get drive information
+        result = subprocess.run(['wmic', 'logicaldisk', 'get', 'name,filesystem,size,freespace', '/format:csv'], 
+                              capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            for line in lines[1:]:  # Skip header
+                parts = line.split(',')
+                if len(parts) >= 4:
+                    drive_letter = parts[1].strip()
+                    fs_type = parts[2].strip()
+                    size_str = parts[3].strip()
+                    free_str = parts[4].strip()
+                    
+                    try:
+                        total_bytes = int(size_str) if size_str else 0
+                        free_bytes = int(free_str) if free_str else 0
+                        used_bytes = total_bytes - free_bytes
+                        
+                        if total_bytes > 0:
+                            mounts.append({
+                                "device": drive_letter,
+                                "mount_point": f"{drive_letter}:\\",
+                                "filesystem": fs_type,
+                                "total_gb": round(total_bytes / (1024**3), 1),
+                                "used_gb": round(used_bytes / (1024**3), 1),
+                                "available_gb": round(free_bytes / (1024**3), 1),
+                                "usage_percent": round((used_bytes / total_bytes) * 100, 1)
+                            })
+                    except (ValueError, ZeroDivisionError):
+                        continue
+    except Exception:
+        pass
+    
+    return mounts
+
+
+def _get_mounts_macos():
+    """Get mount information for macOS systems"""
+    mounts = []
+    
+    try:
+        import subprocess
+        # Use diskutil for macOS
+        result = subprocess.run(['diskutil', 'list'], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            # Parse diskutil output (simplified)
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
+                if line.startswith('/dev/'):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        device = parts[0]
+                        mount_point = parts[-1] if len(parts) > 1 else ""
+                        
+                        if mount_point and mount_point.startswith('/'):
+                            try:
+                                mount_path = Path(mount_point)
+                                if mount_path.exists() and mount_path.is_dir():
+                                    statvfs = os.statvfs(mount_point)
+                                    total_bytes = statvfs.f_blocks * statvfs.f_frsize
+                                    available_bytes = statvfs.f_bavail * statvfs.f_frsize
+                                    used_bytes = total_bytes - available_bytes
+                                    
+                                    mounts.append({
+                                        "device": device,
+                                        "mount_point": mount_point,
+                                        "filesystem": "apfs",  # Assume APFS for macOS
+                                        "total_gb": round(total_bytes / (1024**3), 1),
+                                        "used_gb": round(used_bytes / (1024**3), 1),
+                                        "available_gb": round(available_bytes / (1024**3), 1),
+                                        "usage_percent": round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                                    })
+                            except (OSError, PermissionError):
+                                continue
+    except Exception:
+        pass
+    
+    return mounts
+
+
+def _get_mounts_generic():
+    """Generic mount detection fallback"""
+    mounts = []
+    
+    # Try to detect common mount points
+    common_mounts = ['/', '/home', '/usr', '/var', '/tmp']
+    
+    for mount_point in common_mounts:
+        try:
+            mount_path = Path(mount_point)
+            if mount_path.exists() and mount_path.is_dir():
+                statvfs = os.statvfs(mount_point)
+                total_bytes = statvfs.f_blocks * statvfs.f_frsize
+                available_bytes = statvfs.f_bavail * statvfs.f_frsize
+                used_bytes = total_bytes - available_bytes
+                
+                mounts.append({
+                    "device": "unknown",
+                    "mount_point": mount_point,
+                    "filesystem": "unknown",
+                    "total_gb": round(total_bytes / (1024**3), 1),
+                    "used_gb": round(used_bytes / (1024**3), 1),
+                    "available_gb": round(available_bytes / (1024**3), 1),
+                    "usage_percent": round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                })
+        except (OSError, PermissionError, AttributeError):
+            continue
+    
+    return mounts
+
+
+def _get_common_paths(system: str):
+    """Get common paths for different operating systems"""
+    if system == "windows":
+        return [
+            {"name": "Home", "path": str(Path.home()), "description": "User home directory"},
+            {"name": "Desktop", "path": str(Path.home() / "Desktop"), "description": "Desktop folder"},
+            {"name": "Documents", "path": str(Path.home() / "Documents"), "description": "Documents folder"},
+            {"name": "C:", "path": "C:\\", "description": "System drive"},
+            {"name": "Data", "path": str(Path.home() / "data"), "description": "Data directory"}
+        ]
+    elif system == "darwin":  # macOS
+        return [
+            {"name": "Home", "path": str(Path.home()), "description": "User home directory"},
+            {"name": "Desktop", "path": str(Path.home() / "Desktop"), "description": "Desktop folder"},
+            {"name": "Documents", "path": str(Path.home() / "Documents"), "description": "Documents folder"},
+            {"name": "Root", "path": "/", "description": "System root"},
+            {"name": "Volumes", "path": "/Volumes", "description": "Mounted volumes"}
+        ]
+    else:  # Linux and others
+        return [
+            {"name": "Home", "path": str(Path.home()), "description": "User home directory"},
+            {"name": "Root", "path": "/", "description": "System root"},
+            {"name": "Media", "path": "/media", "description": "Removable media"},
+            {"name": "Mount", "path": "/mnt", "description": "Additional mounts"},
+            {"name": "Data", "path": "/data", "description": "Data directory"},
+            {"name": "Datasets", "path": str(Path.home() / "datasets"), "description": "User datasets"}
+        ]

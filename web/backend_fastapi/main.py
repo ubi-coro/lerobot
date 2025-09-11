@@ -149,13 +149,34 @@ sio = socketio.AsyncServer(
 shared.set_socketio(sio)
 
 # Recording worker (Phase 1) registration
-try:
-    from .modules import recording_worker as gui_recording_worker  # type: ignore
-    # Initialize background status emitter after event loop starts
-    # (We can't call get_running_loop yet; schedule via create_task later)
-    gui_recording_worker.register_socketio_handlers(sio)
-except Exception as e:
-    logger.error(f"Failed to initialize GUI recording worker: {e}")
+# We support both package and script execution contexts. When uvicorn reload/spawn runs the file
+# directly, relative imports (".modules") can fail with "attempted relative import".
+gui_recording_worker = None
+_recording_import_errors = []  # collect for diagnostics
+for import_stmt in [
+    "from .modules import recording_worker as rw",  # package style
+    "from modules import recording_worker as rw",   # absolute within backend_fastapi
+]:
+    if gui_recording_worker:
+        break
+    try:
+        namespace: dict = {}
+        exec(import_stmt, globals(), namespace)
+        gui_recording_worker = namespace["rw"]  # type: ignore
+        logger.info(f"✅ GUI recording worker imported via: {import_stmt}")
+    except Exception as e:  # pragma: no cover
+        _recording_import_errors.append(f"{import_stmt} -> {e}")
+
+if not gui_recording_worker:
+    logger.error(
+        "Failed to import GUI recording worker. Tried variants:\n" + "\n".join(_recording_import_errors)
+    )
+else:
+    try:
+        gui_recording_worker.register_socketio_handlers(sio)  # type: ignore
+        logger.info("✅ GUI recording worker Socket.IO handlers registered")
+    except Exception as e:  # pragma: no cover
+        logger.error(f"Failed to register recording worker handlers: {e}")
 
 # Create Socket.IO ASGI app
 socket_app = socketio.ASGIApp(sio, app)
@@ -163,10 +184,12 @@ socket_app = socketio.ASGIApp(sio, app)
 @app.on_event("startup")
 async def _init_gui_recording_worker():  # pragma: no cover - startup hook
     try:
-        if 'gui_recording_worker' in globals():
+        if gui_recording_worker:
             loop = asyncio.get_running_loop()
-            gui_recording_worker.init_recording_worker(loop)
+            gui_recording_worker.init_recording_worker(loop)  # type: ignore
             logger.info("GUI recording worker initialized (status emitter started)")
+        else:
+            logger.warning("GUI recording worker not available; recording UI will be non-functional")
     except Exception as e:  # pragma: no cover
         logger.error(f"Error initializing GUI recording worker: {e}")
 

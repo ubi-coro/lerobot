@@ -79,11 +79,14 @@
           <div class="bar"><div class="fill" :style="{width: progressPct+'%'}"></div></div>
         </div>
         <div class="episode" v-if="isActive">
-          <label>Current Episode Progress</label>
-          <div class="bar small"><div class="fill" :style="{width: episodeProgressPct+'%'}"></div></div>
+          <label>{{ phaseLabel }} Progress</label>
+          <div class="bar small" :class="{ indeterminate: !status.phase_total_s }">
+            <div class="fill" :style="{width: (status.phase_total_s ? phaseBarPct : 35)+'%'}"></div>
+          </div>
           <div class="metrics-row">
-            <span>{{ status.episode_frames }} frames</span>
-            <span>{{ status.episode_elapsed_s?.toFixed(1) || '0.0' }}s / {{ status.episode_duration_s }}</span>
+            <span v-if="status.phase==='recording'">{{ status.episode_frames }} frames</span>
+            <span v-else>&nbsp;</span>
+            <span v-if="phaseTimeText">{{ phaseTimeText }}</span>
           </div>
         </div>
         <div class="metrics">
@@ -115,7 +118,7 @@ const robotStore = useRobotStore();
 recStore.ensureSocketListeners();
 
 const { config: cfg, status, validationErrors: errors, error } = storeToRefs(recStore);
-const { isActive, canStart, progressPct, episodeProgressPct } = storeToRefs(recStore);
+const { isActive, canStart, progressPct, phaseBarPct, phaseLabel, phaseTimeText } = storeToRefs(recStore);
 
 function onChange() { recStore.updateConfig({ ...cfg.value }); }
 function start() { recStore.start(); }
@@ -169,6 +172,16 @@ section.disabled { opacity:.65; pointer-events:none; }
 .bar { position:relative; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:5px; height:12px; overflow:hidden; }
 .bar.small { height:8px; }
 .fill { position:absolute; top:0; left:0; bottom:0; background:linear-gradient(90deg,#10b981,#059669); transition:width .25s linear; }
+/* Indeterminate shimmer for processing/pushing phases */
+.bar.indeterminate .fill { 
+  width: 35% !important; 
+  animation: shimmer 1.2s infinite linear; 
+  background: linear-gradient(90deg, rgba(16,185,129,0.2), rgba(16,185,129,0.6), rgba(16,185,129,0.2));
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
 .metrics { display:grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr)); gap:.65rem; }
 .metric { background:#f1f5f9; padding:.6rem .7rem; border-radius:6px; display:flex; flex-direction:column; gap:.25rem; border:1px solid #e2e8f0; }
 .metric .lbl { font-size:.6rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; opacity:.55; }

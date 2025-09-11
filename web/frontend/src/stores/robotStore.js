@@ -5,6 +5,7 @@ import robotApi from '@/services/api/robotApi';
 export const useRobotStore = defineStore('robot', {
   state: () => ({
     configs: [],
+  selectedRobotType: (typeof localStorage !== 'undefined' && localStorage.getItem('lerobot.selectedRobotType')) || 'aloha',
     status: {
       connected: false,
       available_arms: [],
@@ -45,7 +46,8 @@ export const useRobotStore = defineStore('robot', {
   hasError: (state) => state.internalHasError || !!state.status.error,
   // unified public error message accessor
   errorMessage: (state) => state.internalErrorMessage || state.status.error || '',
-  availableCameras: (state) => state.status.cameras || []
+  availableCameras: (state) => state.status.cameras || [],
+  robotType: (state) => state.selectedRobotType,
   },
 
   actions: {
@@ -101,6 +103,12 @@ export const useRobotStore = defineStore('robot', {
           console.log('[robotStore] Updated camera list from event:', data.cameras);
         }
       });
+    },
+
+    // Set and persist chosen robot type (UI only for now)
+    setRobotType(type) {
+      this.selectedRobotType = type || 'aloha';
+      try { localStorage.setItem('lerobot.selectedRobotType', this.selectedRobotType); } catch (_) {}
     },
 
     // Fetch robot configurations

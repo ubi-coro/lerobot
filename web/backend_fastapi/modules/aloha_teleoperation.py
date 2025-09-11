@@ -59,6 +59,7 @@ class ApiResponse(BaseModel):
 
 class AlohaConfig(BaseModel):
     """ALOHA-specific teleoperation configuration"""
+    robot_type: str = Field(default="aloha", description="Robot type (currently only 'aloha' supported)")
     fps: int = Field(default=30, ge=1, le=120, description="Frames per second")
     max_relative_target: Optional[float] = Field(default=25, ge=0, le=100, description="Maximum relative target (degrees)")
     moving_time: float = Field(default=0.1, ge=0.01, le=1.0, description="Moving time for velocity profiles")

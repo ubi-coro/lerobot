@@ -9,6 +9,18 @@
         <p>{{ statusMessage }}</p>
       </div>
       <div class="status-actions" v-if="!busy">
+        <div class="robot-type-picker" v-if="!isConnected">
+          <label class="rt-label">Robot Type</label>
+          <select v-model="selectedType" @change="onTypeChange">
+            <option value="aloha">ALOHA</option>
+            <option value="koch" disabled>Koch</option>
+            <option value="koch_bimanual" disabled>Koch Bimanual</option>
+            <option value="so101" disabled>So101</option>
+            <option value="so100" disabled>So100</option>
+            <option value="lekiwi" disabled>LeKiwi</option>
+            <option value="stretch" disabled>Stretch</option>
+          </select>
+        </div>
         <button 
           v-if="!isConnected" 
           @click="connect" 
@@ -34,7 +46,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 const emit = defineEmits(['connect-error','connected']);
 import { useRobotStore } from '@/stores/robotStore';
 import robotApi from '@/services/api/robotApi';
@@ -42,6 +54,7 @@ import robotApi from '@/services/api/robotApi';
 const robotStore = useRobotStore();
 const busy = ref(false);
 const error = ref('');
+const selectedType = ref(robotStore.robotType || 'aloha');
 
 const isConnected = computed(()=> robotStore.status.connected);
 // Mirror TeleoperationView naming for exact design parity
@@ -67,7 +80,7 @@ const statusMessage = computed(() => {
   if (busy.value) return 'Establishing connection to robot hardware';
   if (error.value) return 'Unable to connect to robot';
   if (isConnected.value) return 'Ready for operations';
-  return 'Click Connect Robot to begin';
+  return `Click Connect Robot to begin (type: ${selectedType.value.toUpperCase()})`;
 });
 
 async function connect(){
@@ -80,7 +93,7 @@ async function connect(){
     // Mirror TeleoperationView connect signature: first param operation mode, second settings
     const defaultMode = 'bimanual';
     const cameras = (robotStore.availableCameras || []).map(c => c.id) || [];
-    const response = await robotApi.connect(defaultMode, {
+  const response = await robotApi.connect(defaultMode, {
       arms: ['left','right'],
       cameras
     });
@@ -100,6 +113,12 @@ async function connect(){
 async function disconnect(){
   try { await robotStore.disconnectRobot(); } catch(e){ /* ignore */ }
 }
+
+function onTypeChange(){
+  robotStore.setRobotType(selectedType.value);
+}
+
+watch(() => robotStore.robotType, (val) => { if (val) selectedType.value = val; });
 </script>
 
 <style scoped>
@@ -119,6 +138,9 @@ async function disconnect(){
 .status-info h3 { margin: 0 0 0.5rem 0; font-size: 1.5rem; font-weight: 600; color: #1f2937; }
 .status-info p { margin: 0; color: #6b7280; font-size: 1rem; line-height: 1.4; }
 .status-actions { display: flex; gap: 1rem; }
+.robot-type-picker { display:flex; align-items:center; gap:.5rem; margin-right: .75rem; }
+.robot-type-picker .rt-label { font-size:.8rem; color:#374151; font-weight:600; }
+.robot-type-picker select { padding:.5rem .6rem; border:1px solid #d1d5db; border-radius:.5rem; background:#fff; font-size:.9rem; color:#111827; }
 button.btn { padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; cursor: pointer; font-weight: 500; transition: all 0.2s ease; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; }
 button.btn-primary { background: #3b82f6; color: white; }
 button.btn-primary:hover:not(:disabled) { background: #2563eb; }

@@ -15,11 +15,11 @@ function validateConfig(cfg) {
 
 export const useRecordingStore = defineStore('recording', {
   state: () => ({
-    config: {
+  config: {
       repo_id: '',
       single_task: '',
       fps: 30,
-      warmup_time_s: 2,
+      warmup_time_s: 10,
       episode_time_s: 30,
       reset_time_s: 10,
       num_episodes: 1,
@@ -40,7 +40,10 @@ export const useRecordingStore = defineStore('recording', {
       episode_duration_s: null,
       fps_target: null,
       fps_current: null,
-      state: 'idle'
+  state: 'idle',
+  phase: 'idle',
+  phase_elapsed_s: null,
+  phase_total_s: null
     },
     starting: false,
     error: null,
@@ -59,14 +62,69 @@ export const useRecordingStore = defineStore('recording', {
     episodeProgressPct: (s) => {
       if (!s.status.episode_duration_s || !s.status.episode_elapsed_s) return 0;
       return Math.min(100, Math.round((s.status.episode_elapsed_s / s.status.episode_duration_s) * 100));
+    },
+    phaseCountdownPct: (s) => {
+      const total = s.status.phase_total_s;
+      const elapsed = s.status.phase_elapsed_s;
+      if (!total || total <= 0 || elapsed == null) return 0;
+      const remaining = Math.max(0, total - elapsed);
+      return Math.max(0, Math.min(100, Math.round((remaining / total) * 100)));
+    },
+    // Mixed-mode bar percent: countdown for warmup/reset, count up for recording
+    phaseBarPct: (s) => {
+      const total = s.status.phase_total_s;
+      const elapsed = s.status.phase_elapsed_s;
+      if (!total || total <= 0 || elapsed == null) return 0;
+      const ph = s.status.phase || s.status.state;
+      if (ph === 'recording') {
+        return Math.max(0, Math.min(100, Math.round((elapsed / total) * 100)));
+      }
+      const remaining = Math.max(0, total - elapsed);
+      return Math.max(0, Math.min(100, Math.round((remaining / total) * 100)));
+    },
+    // Friendly time label per phase: recording shows elapsed/total, others show remaining
+    phaseTimeText: (s) => {
+      const ph = s.status.phase || s.status.state;
+      const total = s.status.phase_total_s || s.status.episode_duration_s;
+      const elapsed = s.status.phase_elapsed_s || 0;
+      if (!total || total <= 0) {
+        // Indeterminate phases like processing/pushing: no time shown
+        return '';
+      }
+      if (ph === 'recording') {
+        const e = Math.max(0, elapsed).toFixed(1);
+        return `${e}s / ${total}`;
+      }
+      const remaining = Math.max(0, total - elapsed).toFixed(1);
+      return `${remaining}s remaining`;
+    },
+    phaseLabel: (s) => {
+      const ph = s.status.phase || s.status.state;
+      if (ph === 'warmup') return 'Warmup';
+      if (ph === 'recording') return 'Recording';
+      if (ph === 'resetting') return 'Resetting';
+      if (ph === 'processing') return 'Processing';
+      if (ph === 'pushing') return 'Pushing';
+      if (ph === 'transition') return 'Preparing';
+      return 'Idle';
     }
   },
   actions: {
     _initPersistence() {
       // load saved root if present and none set
       const savedRoot = localStorage.getItem('lerobot.recording.root');
+      const savedRepo = localStorage.getItem('lerobot.recording.repo_id');
+      const savedTask = localStorage.getItem('lerobot.recording.single_task');
       if (savedRoot && !this.config.root) {
         this.config.root = savedRoot;
+        this.validationErrors = validateConfig(this.config);
+      }
+      if (savedRepo && !this.config.repo_id) {
+        this.config.repo_id = savedRepo;
+        this.validationErrors = validateConfig(this.config);
+      }
+      if (savedTask && !this.config.single_task) {
+        this.config.single_task = savedTask;
         this.validationErrors = validateConfig(this.config);
       }
     },
@@ -83,7 +141,8 @@ export const useRecordingStore = defineStore('recording', {
         this.lastUpdate = Date.now();
       });
       sock.on('recording_error', (payload) => {
-        this.error = payload?.error || 'Unknown recording error';
+  this.error = payload?.error || 'Unknown recording error';
+  this.starting = false;
       });
       sock.on('recording_started', () => {
         this.starting = false;
@@ -101,6 +160,12 @@ export const useRecordingStore = defineStore('recording', {
       if (typeof partial.root !== 'undefined') {
         try { localStorage.setItem('lerobot.recording.root', this.config.root || ''); } catch (_) { /* ignore */ }
       }
+      if (typeof partial.repo_id !== 'undefined') {
+        try { localStorage.setItem('lerobot.recording.repo_id', this.config.repo_id || ''); } catch (_) { /* ignore */ }
+      }
+      if (typeof partial.single_task !== 'undefined') {
+        try { localStorage.setItem('lerobot.recording.single_task', this.config.single_task || ''); } catch (_) { /* ignore */ }
+      }
     },
     validateAll() {
       this.validationErrors = validateConfig(this.config);
@@ -109,6 +174,7 @@ export const useRecordingStore = defineStore('recording', {
     start() {
       const robotStore = useRobotStore();
       this.ensureSocketListeners();
+      // Require a connected robot; connection happens from the overview panel.
       if (!robotStore.isConnected) {
         this.error = 'Robot not connected';
         return;
@@ -136,6 +202,9 @@ export const useRecordingStore = defineStore('recording', {
     },
     skipEpisode() {
       const sock = useRobotStore().socket; if (sock) sock.emit('recording_command', { action: 'skip_episode' });
+    },
+    finishEarlyEpisode() {
+      const sock = useRobotStore().socket; if (sock) sock.emit('recording_command', { action: 'exit_early' });
     },
     emergencyStop() {
       const sock = useRobotStore().socket; if (sock) sock.emit('recording_command', { action: 'stop' });
