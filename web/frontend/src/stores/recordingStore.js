@@ -143,6 +143,9 @@ export const useRecordingStore = defineStore('recording', {
       sock.on('recording_error', (payload) => {
   this.error = payload?.error || 'Unknown recording error';
   this.starting = false;
+  // Reset status on error to allow retry
+  this.status.active = false;
+  this.status.phase = 'idle';
       });
       sock.on('recording_started', () => {
         this.starting = false;

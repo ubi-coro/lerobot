@@ -86,7 +86,7 @@
           <div class="metrics-row">
             <span v-if="status.phase==='recording'">{{ status.episode_frames }} frames</span>
             <span v-else>&nbsp;</span>
-            <span v-if="phaseTimeText">{{ phaseTimeText }}</span>
+            <span v-if="phaseTimeText && status.phase !== 'processing' && status.phase !== 'pushing'">{{ phaseTimeText }}</span>
           </div>
         </div>
         <div class="metrics">

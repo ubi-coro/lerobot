@@ -167,7 +167,12 @@ class ControlEvents:
         self._event_dict[key] = value
 
     def __len__(self):
-        len(self._event_dict)
+        # Return number of available event flags
+        return len(self._event_dict)
+
+    def __contains__(self, key):
+        # Allow `key in events` checks without triggering iteration protocol
+        return key in self._event_dict
 
     def update(self):
         for handler in self._foot_switch_threads.values():

@@ -140,22 +140,22 @@ class RecordingWorkerState:
             return {
                 "active": self.active,
                 "episode_index": self.episode_index,
-                "total_episodes": getattr(self.cfg, "num_episodes", None),
+                "total_episodes": getattr(self.cfg, "num_episodes", 0) or 0,
                 "episode_frames": self.episode_frames,
                 "total_frames": self.total_frames,
                 "episode_elapsed_s": episode_elapsed,
-                "episode_duration_s": getattr(self.cfg, "episode_time_s", None),
+                "episode_duration_s": getattr(self.cfg, "episode_time_s", 0) or 0,
                 "repo_id": getattr(self.cfg, "repo_id", None),
                 "single_task": getattr(self.cfg, "single_task", None),
-                "fps_target": getattr(self.cfg, "fps", None),
+                "fps_target": getattr(self.cfg, "fps", 0) or 0,
                 # fps_current simple estimate: frames / elapsed
                 "fps_current": (
                     (self.episode_frames / episode_elapsed) if episode_elapsed and episode_elapsed > 0 else None
                 ),
                 # Phase & countdown support for UI
                 "phase": self.phase,
-                "phase_elapsed_s": phase_elapsed,
-                "phase_total_s": self.phase_total_s,
+                "phase_elapsed_s": phase_elapsed or 0,
+                "phase_total_s": self.phase_total_s or 0,
                 # Keep legacy 'state' for compatibility but align with phase
                 "state": self.phase if self.active or self.phase != "idle" else "idle",
             }
@@ -243,6 +243,18 @@ def start_recording_via_api(config: Dict[str, Any]):
     num_img_writer_proc = _pos_int(config.get("num_image_writer_processes", 0), 0)
     num_img_writer_threads_per_cam = _pos_int(config.get("num_image_writer_threads_per_camera", 4), 4)
 
+    # Sanitize num_episodes
+    num_episodes_val = config.get("num_episodes", 1)
+    if num_episodes_val is None:
+        num_episodes_val = 1
+    else:
+        try:
+            num_episodes_val = int(num_episodes_val)
+            if num_episodes_val < 1:
+                num_episodes_val = 1
+        except Exception:
+            num_episodes_val = 1
+
     # Build RecordControlConfig (Phase 1 subset) with defaults for unspecified values
     cfg = RecordControlConfig(
         repo_id=config["repo_id"],
@@ -251,7 +263,7 @@ def start_recording_via_api(config: Dict[str, Any]):
         warmup_time_s=warmup_time_s,
         episode_time_s=episode_time_s,
         reset_time_s=reset_time_s,
-        num_episodes=config.get("num_episodes", 1),
+        num_episodes=num_episodes_val,
         video=config.get("video", True),
         push_to_hub=config.get("push_to_hub", False),
         private=config.get("private", False),
@@ -265,6 +277,28 @@ def start_recording_via_api(config: Dict[str, Any]):
         save_eval=True,
         root=config.get("root"),
     )
+
+    # Ensure no None values in cfg to prevent TypeErrors
+    if cfg.num_episodes is None:
+        cfg.num_episodes = 1
+    if cfg.episode_time_s is None:
+        cfg.episode_time_s = 30.0
+    if cfg.warmup_time_s is None:
+        cfg.warmup_time_s = 10.0
+    if cfg.reset_time_s is None:
+        cfg.reset_time_s = 10.0
+    if cfg.fps is None:
+        cfg.fps = 30
+    if cfg.video is None:
+        cfg.video = True
+    if cfg.push_to_hub is None:
+        cfg.push_to_hub = False
+    if cfg.private is None:
+        cfg.private = False
+    if cfg.resume is None:
+        cfg.resume = False
+    if cfg.display_data is None:
+        cfg.display_data = False
 
     # Guard against concurrent teleoperation stopping hazards (optional)
     if aloha_state and aloha_state.get("active"):
@@ -450,7 +484,9 @@ def start_recording_via_api(config: Dict[str, Any]):
                     log_say("No frames captured this episode, re-recording", cfg.play_sounds)
 
             log_say("Stop recording", cfg.play_sounds, blocking=True)
-            core_stop_recording(robot, None, cfg.display_data)
+            # Only disconnect if stopped manually; leave connected for resuming
+            if events["stop_recording"]:
+                core_stop_recording(robot, None, cfg.display_data)
 
             if cfg.push_to_hub:
                 try:
@@ -465,6 +501,11 @@ def start_recording_via_api(config: Dict[str, Any]):
 
         except Exception as e:
             logger.error(f"Recording worker error: {e}", exc_info=True)
+            # Disconnect on error
+            try:
+                core_stop_recording(robot, None, cfg.display_data)
+            except Exception:
+                pass  # Ignore disconnect errors
             # Emit error event if possible
             sio = shared.get_socketio() if shared else None
             if sio:
