@@ -348,10 +348,78 @@ const stopDurationTracking = () => {
 }
 
 // Lifecycle
+const mapBackendModeToUi = (m) => {
+  if (!m) return 'bimanual'
+  if (m === 'right_only' || m === 'right_arm') return 'right_arm'
+  if (m === 'left_only' || m === 'left_arm') return 'left_arm'
+  return 'bimanual'
+}
+
+const startStatusPolling = () => {
+  if (window.teleoperationStatusInterval) return
+  window.teleoperationStatusInterval = setInterval(async () => {
+    try {
+      const { data } = await robotApi.getTeleoperationStatus()
+      const s = data.data || {}
+      if (!s.active) {
+        clearInterval(window.teleoperationStatusInterval)
+        window.teleoperationStatusInterval = null
+        isOperating.value = false
+        return
+      }
+      // keep duration fresh using server session_duration if provided
+      if (typeof s.session_duration === 'number' && s.session_duration >= 0) {
+        operationStartTime.value = Date.now() - Math.floor(s.session_duration) * 1000
+      }
+    } catch (e) {
+      // ignore transient errors
+    }
+  }, 2000)
+}
+
+const stopStatusPolling = () => {
+  if (window.teleoperationStatusInterval) {
+    clearInterval(window.teleoperationStatusInterval)
+    window.teleoperationStatusInterval = null
+  }
+}
+
+const syncTeleopStatus = async () => {
+  try {
+    const { data } = await robotApi.getTeleoperationStatus()
+    const s = data.data || {}
+    if (s.active) {
+      isOperating.value = true
+      // Restore config snapshot if available
+      if (s.configuration) {
+        const cfg = s.configuration
+        teleoperationConfig.value.operationMode = mapBackendModeToUi(cfg.operation_mode)
+        teleoperationConfig.value.showCameras = !!cfg.show_cameras
+        teleoperationConfig.value.displayData = !!cfg.display_data
+      }
+      // Restore duration based on server session time
+      if (typeof s.session_duration === 'number' && s.session_duration >= 0) {
+        operationStartTime.value = Date.now() - Math.floor(s.session_duration) * 1000
+      } else if (!operationStartTime.value) {
+        operationStartTime.value = Date.now()
+      }
+      startDurationTracking()
+      startStatusPolling()
+    } else {
+      isOperating.value = false
+      stopStatusPolling()
+    }
+  } catch (e) {
+    // If status endpoint fails, leave current UI state unchanged
+  }
+}
+
 onMounted(() => {
   // Ensure socket connected for receiving camera_frame events
   robotStore.initSocket()
   robotStore.updateStatus()
+  // Sync teleoperation status when (re)entering the view
+  syncTeleopStatus()
   startDurationTracking()
   const handleKeyPress = (event) => {
     if (event.code === 'Space' && isOperating.value) {
@@ -360,9 +428,18 @@ onMounted(() => {
     }
   }
   document.addEventListener('keydown', handleKeyPress)
+  const handleVisibility = () => {
+    if (!document.hidden) {
+      // Refresh state when the tab/view regains focus
+      syncTeleopStatus()
+    }
+  }
+  document.addEventListener('visibilitychange', handleVisibility)
   onUnmounted(() => {
     document.removeEventListener('keydown', handleKeyPress)
+    document.removeEventListener('visibilitychange', handleVisibility)
     stopDurationTracking()
+    stopStatusPolling()
   })
 })
 
