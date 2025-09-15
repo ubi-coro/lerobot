@@ -118,12 +118,8 @@
           <span class="status-value">{{ teleoperationConfig.environment === 'real' ? 'Real Robot' : 'Simulation' }}</span>
         </div>
         <div class="status-item">
-          <span class="status-label">Cameras</span>
-          <span class="status-value">{{ teleoperationConfig.showCameras ? 'Active' : 'Disabled' }}</span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">External Display</span>
-          <span class="status-value">{{ teleoperationConfig.displayData ? 'Active' : 'Disabled' }}</span>
+          <span class="status-label">FPS Current</span>
+          <span class="status-value">{{ teleopStatus.fps_current != null ? teleopStatus.fps_current.toFixed(1) : '-' }}</span>
         </div>
         <div class="status-item">
           <span class="status-label">Duration</span>
@@ -165,6 +161,11 @@ const isStarting = ref(false)
 const isOperating = ref(false)
 const operationStartTime = ref(null)
 const operationDuration = ref(0)
+const fpsTarget = computed(() => {
+  const cfg = robotStore.status?.teleoperation?.configuration
+  return (cfg && typeof cfg.fps === 'number') ? cfg.fps : 30
+})
+const teleopStatus = computed(() => robotStore.status?.teleoperation || {})
 
 // Teleoperation configuration
 const teleoperationConfig = ref({
@@ -241,6 +242,7 @@ const startTeleoperation = async () => {
       safety_limits: true,
       performance_monitoring: true
     }
+  // fps target comes from backend configuration in teleopStatus; no direct set here
     
     // Use the dedicated teleoperation API with 'normal' preset as default
     const response = await robotApi.startTeleoperation({ ...config, preset: 'normal' })
@@ -251,7 +253,7 @@ const startTeleoperation = async () => {
     console.log('✅ Teleoperation started successfully:', response.data)
     
     // Add status polling to detect issues early
-    const statusCheckInterval = setInterval(async () => {
+  const statusCheckInterval = setInterval(async () => {
       try {
         const status = await robotApi.getTeleoperationStatus()
         console.log('📊 Teleoperation status check:', status.data)
@@ -268,7 +270,7 @@ const startTeleoperation = async () => {
         console.error('❌ Status check failed:', error)
         // Don't stop teleoperation just because status check failed
       }
-    }, 2000) // Check every 2 seconds
+  }, 2000) // Check every 2 seconds
     
     // Store interval for cleanup
     window.teleoperationStatusInterval = statusCheckInterval
@@ -293,6 +295,7 @@ const stopTeleoperation = async () => {
     isOperating.value = false
     operationStartTime.value = null
     operationDuration.value = 0
+  // clear derived fps (teleopStatus will reflect null on next status)
   // Clear any cached frames
   robotStore.cameraStreams = {}
     console.log('✅ Teleoperation stopped successfully')
@@ -307,6 +310,7 @@ const emergencyStop = async () => {
     isOperating.value = false
     operationStartTime.value = null
     operationDuration.value = 0
+  // clear derived fps (teleopStatus will reflect null on next status)
   } catch (error) {
     console.error('Emergency stop failed:', error)
   }
@@ -371,6 +375,7 @@ const startStatusPolling = () => {
       if (typeof s.session_duration === 'number' && s.session_duration >= 0) {
         operationStartTime.value = Date.now() - Math.floor(s.session_duration) * 1000
       }
+  // FPS metrics come via teleopStatus from socket and config; no direct assignment needed here
     } catch (e) {
       // ignore transient errors
     }
@@ -403,6 +408,7 @@ const syncTeleopStatus = async () => {
       } else if (!operationStartTime.value) {
         operationStartTime.value = Date.now()
       }
+  // FPS values are derived from store/socket; no direct set here
       startDurationTracking()
       startStatusPolling()
     } else {

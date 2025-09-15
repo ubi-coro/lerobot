@@ -90,7 +90,7 @@
       <div class="mt-auto border-top border-secondary p-3">
         <div class="d-flex align-items-center">
           <i :class="['bi', robotConnected ? 'bi-circle-fill text-success' : 'bi-circle-fill text-danger']"></i>
-          <span class="ms-2" v-if="!sidebarCollapsed">{{ robotConnected ? 'Connected' : 'Disconnected' }}</span>
+          <span class="ms-2" v-if="!sidebarCollapsed">{{ currentModeLabel }}</span>
         </div>
       </div>
     </div>
@@ -143,14 +143,20 @@
 
 <script>
 import { useRobotStore } from '@/stores/robotStore';
+import { useRecordingStore } from '@/stores/recordingStore';
+import { useDatasetStore } from '@/stores/datasetStore';
 
 export default {
   name: 'App',
   setup() {
     const robotStore = useRobotStore();
+    const recordingStore = useRecordingStore();
+    const datasetStore = useDatasetStore();
     
     return {
-      robotStore
+      robotStore,
+      recordingStore,
+      datasetStore
     };
   },
   data() {
@@ -162,6 +168,14 @@ export default {
   computed: {
     robotConnected() {
       return this.robotStore.status.connected;
+    },
+    currentModeLabel() {
+      if (!this.robotConnected) return 'Disconnected';
+      // Priority: Recording > Teleoperating > Replaying > Connected
+      if (this.recordingStore?.isActive) return 'Recording';
+      if (this.robotStore?.isTeleoperating) return 'Teleoperating';
+      if (this.datasetStore?.isReplaying) return 'Replaying';
+      return 'Connected';
     },
     calibrationNeeded(){
       const err = (this.robotStore.errorMessage || '').toLowerCase();
@@ -205,6 +219,12 @@ export default {
       this.darkMode = true;
       document.body.classList.add('dark-mode');
     }
+
+  // Ensure sockets/listeners for global status
+  try { this.robotStore.initSocket(); } catch {}
+  try { this.recordingStore.ensureSocketListeners(); } catch {}
+  // Initialize recording store persistence after Pinia is ready
+  try { this.recordingStore._initPersistence?.(); } catch {}
   }
 }
 </script>

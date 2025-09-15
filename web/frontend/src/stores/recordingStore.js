@@ -219,8 +219,5 @@ export const useRecordingStore = defineStore('recording', {
   }
 });
 
-// Initialize persistence side-effect when store is first created
-const _store = useRecordingStore?.();
-if (_store && typeof _store._initPersistence === 'function') {
-  _store._initPersistence();
-}
+// Note: Do not call useRecordingStore() at module load time; Pinia may not be installed yet.
+// Initialization is triggered explicitly from the app after Pinia is ready.

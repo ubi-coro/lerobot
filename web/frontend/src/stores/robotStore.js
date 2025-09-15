@@ -115,6 +115,10 @@ export const useRobotStore = defineStore('robot', {
             session_duration: payload?.session_duration ?? 0,
             display_data_active: payload?.display_data_active ?? false,
             configuration: payload?.configuration || null,
+            // Pass-through performance metrics and convenient fields for UI parity with recorder
+            performance_metrics: payload?.performance_metrics || null,
+            fps_target: (payload?.configuration && typeof payload.configuration.fps === 'number') ? payload.configuration.fps : null,
+            fps_current: (payload?.performance_metrics && typeof payload.performance_metrics.average_fps === 'number') ? payload.performance_metrics.average_fps : null,
           };
         } catch (e) {
           console.debug('[robotStore] teleoperation_status handling error:', e);

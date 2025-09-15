@@ -241,37 +241,19 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
             robot = aloha_state["robot"]
             logger.info("Reusing already connected robot instance for teleoperation (no reconnection)")
         else:
-            # Prefer centralized RobotService so teleop/recording share the same instance
+            # Strict: require RobotService; no direct creation fallback
             rs = _get_robot_service()
-            if rs is not None:
-                overrides = _build_robot_overrides_from_config(config)
-                try:
-                    logger.info(f"Requesting robot via RobotService with overrides: {overrides}")
-                    result = rs.connect_aloha(overrides=overrides)
-                    if not result.get("connected"):
-                        raise RuntimeError(result.get("error") or "RobotService failed to connect")
-                    robot = rs.robot
-                    aloha_state["robot"] = robot
-                    aloha_state["owned_robot"] = False
-                    logger.info("Robot acquired via RobotService (shared instance)")
-                except Exception as e:
-                    logger.error(f"RobotService connection failed, falling back to direct creation: {e}")
-                    # Fallback to direct creation (rare path)
-                    robot_config = create_aloha_robot_config(config)
-                    robot = make_robot_from_config(robot_config)
-                    robot.connect()
-                    aloha_state["robot"] = robot
-                    aloha_state["owned_robot"] = True
-                    logger.info("ALOHA robot connected successfully (direct instance)")
-            else:
-                # Legacy fallback if RobotService unavailable
-                logger.warning("RobotService not available; creating robot directly (fallback)")
-                robot_config = create_aloha_robot_config(config)
-                robot = make_robot_from_config(robot_config)
-                robot.connect()
-                aloha_state["robot"] = robot
-                aloha_state["owned_robot"] = True
-                logger.info("ALOHA robot connected successfully (direct instance)")
+            if rs is None:
+                raise RuntimeError("RobotService not available; cannot start teleoperation")
+            overrides = _build_robot_overrides_from_config(config)
+            logger.info(f"Requesting robot via RobotService with overrides: {overrides}")
+            result = rs.connect_aloha(overrides=overrides)
+            if not result.get("connected"):
+                raise RuntimeError(result.get("error") or "RobotService failed to connect")
+            robot = rs.robot
+            aloha_state["robot"] = robot
+            aloha_state["owned_robot"] = False
+            logger.info("Robot acquired via RobotService (shared instance)")
 
         # 2. Prepare for LeRobot's control_loop
         # Create a control config object that control_loop understands
@@ -371,6 +353,7 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
         logger.info(f"Starting segmented teleoperation loop (fps={control_cfg.fps}, display_data={control_cfg.display_data})")
         segment_seconds = 1.0  # run control loop in 1s segments
         while not aloha_state["stop_event"].is_set():
+            seg_start = time.perf_counter()
             control_loop(
                 robot=robot,
                 teleoperate=True,
@@ -379,6 +362,27 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
                 events=events,
                 control_time_s=segment_seconds,
             )
+            seg_end = time.perf_counter()
+            elapsed = max(seg_end - seg_start, 1e-6)
+
+            # Update simple performance metrics
+            try:
+                # Approximate current FPS relative to target based on overrun/underrun
+                ratio = segment_seconds / elapsed
+                fps_inst = max(0.0, min(control_cfg.fps * ratio, control_cfg.fps * 1.1))  # clamp to prevent spikes
+
+                pm = aloha_state.get("performance_metrics", {})
+                prev_avg = float(pm.get("average_fps", 0.0) or 0.0)
+                # Exponential moving average
+                avg = (0.8 * prev_avg) + (0.2 * fps_inst)
+                pm["average_fps"] = avg
+                pm["frames_processed"] = float(pm.get("frames_processed", 0.0) or 0.0) + (fps_inst * elapsed)
+                over_ms = max(0.0, (elapsed - segment_seconds) * 1000.0)
+                pm["latency_ms"] = over_ms
+                pm["last_joint_update"] = time.time()
+                aloha_state["performance_metrics"] = pm
+            except Exception:
+                pass
             # Additional early exit if events flagged exit_early
             if events["exit_early"]:
                 break
@@ -457,28 +461,22 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
         # Determine reuse of existing robot_service robot, otherwise acquire it via RobotService
         reuse_existing = False
         rs = _get_robot_service()
-        if rs and getattr(rs, 'status', {}).get('connected') and getattr(rs, 'robot', None):
+        if not rs:
+            return ApiResponse(status="error", message="RobotService unavailable; connect the robot first")
+        if getattr(rs, 'status', {}).get('connected') and getattr(rs, 'robot', None):
             aloha_state["robot"] = rs.robot
             aloha_state["owned_robot"] = False
             reuse_existing = True
             logger.info("Detected existing connected robot_service robot; will reuse for teleoperation")
-        elif rs:
-            # Try to connect via RobotService using config-derived overrides so we don't create a second instance elsewhere
-            overrides = _build_robot_overrides_from_config(config)
-            try:
-                logger.info(f"No shared robot yet; connecting via RobotService with overrides: {overrides}")
-                result = rs.connect_aloha(overrides=overrides)
-                if not result.get("connected"):
-                    raise RuntimeError(result.get("error") or "RobotService failed to connect")
-                aloha_state["robot"] = rs.robot
-                aloha_state["owned_robot"] = False
-                reuse_existing = True
-                logger.info("Robot connected via RobotService for teleoperation (shared instance)")
-            except Exception as e:
-                logger.error(f"RobotService connect failed; worker will fallback to direct creation: {e}")
-                reuse_existing = False
         else:
-            logger.info("RobotService unavailable; worker will create robot directly (fallback)")
+            overrides = _build_robot_overrides_from_config(config)
+            result = rs.connect_aloha(overrides=overrides)
+            if not result.get("connected"):
+                return ApiResponse(status="error", message="Failed to connect via RobotService", data=result)
+            aloha_state["robot"] = rs.robot
+            aloha_state["owned_robot"] = False
+            reuse_existing = True
+            logger.info("Robot connected via RobotService for teleoperation (shared instance)")
 
         # Start teleoperation state
         aloha_state["active"] = True
@@ -497,9 +495,13 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
         }
 
         # Start worker thread (LeLab-style threading)
+        if not reuse_existing:
+            # Shouldn't happen due to strict RobotService policy
+            return ApiResponse(status="error", message="Robot not available for teleoperation")
+
         aloha_state["control_thread"] = threading.Thread(
             target=aloha_teleoperation_worker,
-            args=(config, reuse_existing),
+            args=(config, True),
             daemon=True
         )
         aloha_state["control_thread"].start()

@@ -50,6 +50,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Reduce Socket.IO noise (suppresses repeated 'emitting event' lines)
+for noisy in (
+    'socketio',
+    'socketio.server',
+    'engineio',
+    'engineio.server',
+):
+    try:
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    except Exception:
+        pass
+
 service_bridge = None  # legacy bridge removed
 
 # Import module routers
@@ -142,7 +154,7 @@ sio = socketio.AsyncServer(
         "http://localhost:8000",
         "http://127.0.0.1:8000"
     ],
-    logger=True,
+    logger=False,          # Disable Socket.IO internal logging (we control levels above)
     engineio_logger=False  # Reduce log noise
 )
 

@@ -152,6 +152,8 @@ class RecordingWorkerState:
                 "fps_current": (
                     (self.episode_frames / episode_elapsed) if episode_elapsed and episode_elapsed > 0 else None
                 ),
+                # UI hint: if a re-record has been requested for the current episode
+                "rerecord_pending": bool(self.events["rerecord_episode"]) if self.events is not None else False,
                 # Phase & countdown support for UI
                 "phase": self.phase,
                 "phase_elapsed_s": phase_elapsed or 0,
@@ -447,11 +449,13 @@ def start_recording_via_api(config: Dict[str, Any]):
                     interactive=False,
                 )
 
-                # Reset phase (skip for last unless rerecord)
+                # Reset phase (skip for last unless rerecord). Snapshot rerecord to survive events.reset().
+                rerecord_req = bool(events["rerecord_episode"])
                 if not events["stop_recording"] and (
-                    (recording_worker.episode_index < cfg.num_episodes - 1) or events["rerecord_episode"]
+                    (recording_worker.episode_index < cfg.num_episodes - 1) or rerecord_req
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
+                    # Clear exit_early etc. but preserve local rerecord_req for logic below
                     events.reset()
                     with recording_worker.status_lock:
                         recording_worker.phase = "resetting"
@@ -459,9 +463,10 @@ def start_recording_via_api(config: Dict[str, Any]):
                         recording_worker.phase_start_t = time.perf_counter()
                     reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
-                if events["rerecord_episode"]:
+                if rerecord_req:
                     log_say("Re-record episode", cfg.play_sounds)
                     dataset.clear_episode_buffer()
+                    # Do not advance episode index; restart same episode in next loop iteration
                     continue
 
                 # Use episode_buffer size to determine if we captured any frames in this episode
@@ -482,6 +487,9 @@ def start_recording_via_api(config: Dict[str, Any]):
                     recording_worker.episode_index += 1
                 else:
                     log_say("No frames captured this episode, re-recording", cfg.play_sounds)
+                    # If we ended up with no frames and no explicit rerecord request, force rerecord
+                    # to avoid advancing the episode counter silently.
+                    continue
 
             log_say("Stop recording", cfg.play_sounds, blocking=True)
             # Only disconnect if stopped manually; leave connected for resuming

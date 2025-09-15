@@ -96,9 +96,12 @@
         </div>
         <div class="runtime-actions" v-if="isActive">
           <button @click="stop">Stop</button>
-          <button @click="rerecordEpisode">Re-record</button>
-            <button @click="skipEpisode">Skip</button>
+          <button @click="rerecordEpisode" :disabled="status.rerecord_pending">Re-record</button>
+          <button @click="skipEpisode" :disabled="status.rerecord_pending">Skip</button>
           <button class="danger" @click="emergencyStop">Emergency Stop</button>
+        </div>
+        <div v-if="status.rerecord_pending" class="hint" style="margin-top:.25rem;">
+          Re-record requested — finishing this phase, then resetting and redoing the current episode.
         </div>
         <div class="state-line">State: {{ status.state }}</div>
       </section>
