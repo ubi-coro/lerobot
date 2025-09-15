@@ -292,6 +292,15 @@ async def _start_background_tasks():
     # Start teleop status broadcaster
     asyncio.create_task(_teleop_status_broadcaster())
 
+@app.on_event("startup")
+async def _store_event_loop_for_threads():
+    """Capture the running loop so background threads can schedule emits safely."""
+    try:
+        loop = asyncio.get_running_loop()
+        shared.set_event_loop(loop)
+    except Exception:
+        pass
+
 @app.get("/api/modules", response_model=ApiResponse)
 async def get_modules():
     """Get information about loaded modules"""

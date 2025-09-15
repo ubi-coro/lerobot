@@ -309,7 +309,59 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
                     logger.info(f"Camera devices available on robot: {cam_keys}")
                 except Exception:
                     logger.info("No robot.cameras introspection available")
-                camera_streaming.start_streams(robot, fps=cam_fps)
+                # Pick camera set based on operation mode
+                camera_ids = None
+                try:
+                    available = set(getattr(robot, 'cameras', {}).keys()) if hasattr(robot, 'cameras') else set()
+                except Exception:
+                    available = set()
+
+                def pick_first(keys, *needles):
+                    for k in keys:
+                        low = k.lower()
+                        if all(n in low for n in needles):
+                            return k
+                    return None
+
+                # Preferred canonical names
+                top = None
+                low = None
+                lwrist = None
+                rwrist = None
+                if available:
+                    # Exact preferred names
+                    if 'cam_high' in available:
+                        top = 'cam_high'
+                    if 'cam_low' in available:
+                        low = 'cam_low'
+                    if 'cam_left_wrist' in available:
+                        lwrist = 'cam_left_wrist'
+                    if 'cam_right_wrist' in available:
+                        rwrist = 'cam_right_wrist'
+                    # Heuristics if missing
+                    top = top or pick_first(available, 'high') or pick_first(available, 'top') or pick_first(available, 'overhead')
+                    low = low or pick_first(available, 'low')
+                    lwrist = lwrist or pick_first(available, 'left', 'wrist') or pick_first(available, 'wrist', 'left')
+                    rwrist = rwrist or pick_first(available, 'right', 'wrist') or pick_first(available, 'wrist', 'right')
+
+                if config.operation_mode == OperationMode.BIMANUAL:
+                    # Stream all available canonical cameras
+                    desired = [c for c in [top, low, lwrist, rwrist] if c]
+                    camera_ids = desired if desired else None
+                elif config.operation_mode == OperationMode.LEFT_ONLY:
+                    desired = [c for c in [top, low, lwrist] if c]
+                    camera_ids = desired if desired else None
+                    if desired:
+                        logger.info(f"Single-arm LEFT: streaming {desired} (3 if available)")
+                elif config.operation_mode == OperationMode.RIGHT_ONLY:
+                    desired = [c for c in [top, low, rwrist] if c]
+                    camera_ids = desired if desired else None
+                    if desired:
+                        logger.info(f"Single-arm RIGHT: streaming {desired} (3 if available)")
+                else:
+                    camera_ids = None  # default to all
+
+                camera_streaming.start_streams(robot, fps=cam_fps, camera_ids=camera_ids)
                 logger.info(f"Started camera streaming (fps={cam_fps}) for cameras: {camera_streaming.get_active_streams()}")
         except Exception as e:
             logger.warning(f"Failed to start camera streaming: {e}")

@@ -1,5 +1,14 @@
 <template>
-  <div class="camera-viewer">
+  <div class="camera-viewer" :class="{ expanded: isExpanded }" ref="viewerRef">
+    <!-- Actions bar -->
+    <div class="viewer-actions d-flex justify-content-end align-items-center mb-2">
+      <button class="btn btn-sm" :class="isExpanded ? 'btn-outline-light' : 'btn-outline-secondary'" @click="toggleExpanded">
+        {{ isExpanded ? 'Collapse' : 'Expand' }}
+      </button>
+      <button class="btn btn-sm ms-2" :class="isFullscreen ? 'btn-outline-light' : 'btn-outline-secondary'" @click="toggleFullscreen">
+        {{ isFullscreen ? 'Exit Fullscreen' : 'Fullscreen' }}
+      </button>
+    </div>
     <div v-if="!displayedCameras.length" class="no-cameras">
       <p class="text-muted">No cameras available</p>
     </div>
@@ -58,44 +67,17 @@
         </div>
       </div>
     </div>
-    
-    <!-- Debug info (only in development) -->
-    <div v-if="showDebugInfo" class="mt-3">
-      <div class="card">
-        <div class="card-header">
-          <h6 class="mb-0">Camera Debug Info</h6>
-        </div>
-        <div class="card-body">
-          <p><strong>Available Cameras:</strong> {{ JSON.stringify(cameras) }}</p>
-          <p><strong>Camera Streams:</strong> {{ Object.keys(cameraStreams) }}</p>
-          <p><strong>Socket Connected:</strong> {{ robotStore.socket?.connected || false }}</p>
-          
-          <!-- Test buttons -->
-          <div class="mt-3">
-            <button @click="testCameraStreams" class="btn btn-sm btn-primary me-2">
-              Test Camera Streams
-            </button>
-            <button @click="stopTestStreams" class="btn btn-sm btn-secondary me-2">
-              Stop Test Streams
-            </button>
-            <button @click="forceSocketConnect" class="btn btn-sm btn-info">
-              Force Socket Connect
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRobotStore } from '@/stores/robotStore';
 
 const robotStore = useRobotStore();
-
-// Show debug info in development
-const showDebugInfo = computed(() => process.env.NODE_ENV === 'development');
+const isExpanded = ref(false);
+const isFullscreen = ref(false);
+const viewerRef = ref(null);
 
 // Computed properties
 const cameras = computed(() => robotStore.status.cameras || []);
@@ -138,52 +120,61 @@ const onImageError = (cameraId) => {
   console.warn(`Failed to load camera image for ${cameraId}`);
 };
 
-// Test methods for development
-const testCameraStreams = () => {
-  console.log('Testing camera streams...');
-  robotStore.initSocket();
-  
-  // Test with common ALOHA camera names
-  const testCameras = ['cam_high', 'cam_right_wrist', 'cam_left_wrist', 'cam_low'];
-  testCameras.forEach(cameraId => {
-    robotStore.socket.emit('start_camera_stream', {
-      camera_id: cameraId,
-      fps: 10
-    });
-  });
-};
-
-const stopTestStreams = () => {
-  console.log('Stopping test camera streams...');
-  const testCameras = ['cam_high', 'cam_right_wrist', 'cam_left_wrist', 'cam_low'];
-  testCameras.forEach(cameraId => {
-    robotStore.socket.emit('stop_camera_stream', {
-      camera_id: cameraId
-    });
-  });
-  robotStore.cameraStreams = {};
-};
-
-const forceSocketConnect = () => {
-  console.log('Force connecting socket...');
-  robotStore.initSocket();
-};
-
 // Initialize socket connection when component mounts
 onMounted(() => {
-  console.log('CameraViewer mounted, initializing socket...');
   robotStore.initSocket();
+
+  // Track fullscreen changes to keep state in sync
+  const onFsChange = () => {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    isFullscreen.value = !!fsEl;
+  };
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+
+  // Cleanup listeners on unmount
+  onUnmounted(() => {
+    document.removeEventListener('fullscreenchange', onFsChange);
+    document.removeEventListener('webkitfullscreenchange', onFsChange);
+    // Exit fullscreen if this element owns it
+    if (document.fullscreenElement === viewerRef.value) {
+      document.exitFullscreen?.();
+    }
+  });
 });
 
-// Cleanup when component unmounts
-onUnmounted(() => {
-  console.log('CameraViewer unmounted');
-});
+// UI actions
+const toggleExpanded = () => {
+  isExpanded.value = !isExpanded.value;
+};
+
+const toggleFullscreen = async () => {
+  try {
+    if (!isFullscreen.value) {
+      const el = viewerRef.value;
+      if (el?.requestFullscreen) await el.requestFullscreen();
+      else if (el?.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+      isFullscreen.value = true;
+    } else {
+      await document.exitFullscreen?.();
+      isFullscreen.value = false;
+    }
+  } catch (e) {
+    // Fallback to expanded mode if Fullscreen API fails
+    isExpanded.value = true;
+  }
+};
 </script>
 
 <style scoped>
 .camera-viewer {
   width: 100%;
+}
+
+.camera-viewer .viewer-actions {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .camera-feed {
@@ -222,6 +213,68 @@ onUnmounted(() => {
   min-height: 220px;
   background-color: #f8f9fa;
   border-radius: 5px;
+}
+
+/* Expanded overlay mode */
+.camera-viewer.expanded {
+  position: fixed;
+  inset: 0;
+  background: #111;
+  z-index: 1050; /* above typical app chrome */
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* prevent page scroll in expanded mode */
+}
+
+.camera-viewer.expanded .viewer-actions {
+  background: rgba(20, 20, 20, 0.6);
+  padding: 0.5rem;
+  border-radius: 6px;
+}
+
+.camera-viewer.expanded > .row.g-3 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 1rem;
+  flex: 1 1 auto; /* fill remaining height under actions */
+  height: auto;
+  overflow: hidden;
+}
+
+.camera-viewer.expanded .row {
+  margin: 0 !important; /* neutralize bootstrap row negative margins */
+}
+
+.camera-viewer.expanded .col-md-6.mb-3 { /* remove bootstrap spacing in grid */
+  margin-bottom: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important; /* remove gutters for precise alignment */
+}
+
+.camera-viewer.expanded .card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.camera-viewer.expanded .card-body {
+  flex: 1 1 auto;
+  display: flex;
+  padding: 0; /* already p-0 in template, keep consistent */
+}
+
+.camera-viewer.expanded .camera-feed,
+.camera-viewer.expanded .camera-placeholder {
+  min-height: 0;
+  height: 100%;
+}
+
+.camera-viewer.expanded .camera-feed img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* ensure full video visible without cropping */
 }
 
 /* Make cameras taller on larger screens */

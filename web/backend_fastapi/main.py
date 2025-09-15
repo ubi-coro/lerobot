@@ -187,6 +187,11 @@ async def _init_gui_recording_worker():  # pragma: no cover - startup hook
     try:
         if gui_recording_worker:
             loop = asyncio.get_running_loop()
+            # Store loop for cross-thread scheduling (camera frames, etc.)
+            try:
+                shared.set_event_loop(loop)
+            except Exception:
+                pass
             gui_recording_worker.init_recording_worker(loop)  # type: ignore
             logger.info("GUI recording worker initialized (status emitter started)")
         else:

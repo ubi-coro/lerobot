@@ -74,7 +74,14 @@ def _camera_thread(camera_id: str, robot, fps: int, stop_evt: threading.Event, r
             # Access robot camera only if present
             if robot and hasattr(robot, 'cameras') and camera_id in robot.cameras:
                 camera_obj = robot.cameras[camera_id]
-                frame = camera_obj.read()
+                # Prefer non-blocking camera access if available
+                if hasattr(camera_obj, 'async_read'):
+                    frame = camera_obj.async_read()
+                else:
+                    frame = camera_obj.read()
+                # If depth is enabled, async/read may return (color, depth)
+                if isinstance(frame, tuple) and len(frame) > 0:
+                    frame = frame[0]
             if frame is None:
                 # generate fallback test pattern
                 frame = _test_pattern(camera_id)
@@ -86,31 +93,15 @@ def _camera_thread(camera_id: str, robot, fps: int, stop_evt: threading.Event, r
 
         payload = _encode_frame(frame, resize)
         if payload:
-            try:
-                # Prefer direct emit if running in event loop thread; else schedule
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    sio.start_background_task(
-                        sio.emit,
-                        'camera_frame',
-                        {
-                            'camera_id': camera_id,
-                            'frame': payload,
-                            'ts': time.time()
-                        }
-                    )
-                else:
-                    # Fallback synchronous (should rarely happen)
-                    sio.emit('camera_frame', {
-                        'camera_id': camera_id,
-                        'frame': payload,
-                        'ts': time.time()
-                    })
-                frames_sent += 1
-                if frames_sent <= 5:
-                    logger.debug(f"Emitted initial frame {frames_sent} for {camera_id}")
-            except Exception as e:
-                logger.warning(f"Emit schedule error for {camera_id}: {e}")
+            # Emit via thread-safe helper; no awaiting in this thread
+            shared.emit_threadsafe('camera_frame', {
+                'camera_id': camera_id,
+                'frame': payload,
+                'ts': time.time()
+            })
+            frames_sent += 1
+            if frames_sent <= 5:
+                logger.debug(f"Emitted initial frame {frames_sent} for {camera_id}")
 
         # Periodic log
         now = time.time()
@@ -190,13 +181,8 @@ def start_streams(robot, *, camera_ids: Optional[List[str]] = None, fps: int = 1
             logger.info(f"Started camera streams: {new_started}")
 
     # Emit updated camera list to clients (fire-and-forget)
-    try:
-        sio = shared.get_socketio()
-        if sio:
-            active = get_active_streams()
-            sio.start_background_task(sio.emit, 'camera_list', { 'cameras': active })
-    except Exception as e:
-        logger.debug(f"Failed to emit camera_list: {e}")
+    active = get_active_streams()
+    shared.emit_threadsafe('camera_list', { 'cameras': active })
 
 
 def stop_streams(camera_ids: Optional[List[str]] = None):
@@ -218,13 +204,8 @@ def stop_streams(camera_ids: Optional[List[str]] = None):
 def stop_all_streams():
     stop_streams()
     # Notify clients that list is now possibly empty
-    try:
-        sio = shared.get_socketio()
-        if sio:
-            active = get_active_streams()
-            sio.start_background_task(sio.emit, 'camera_list', { 'cameras': active })
-    except Exception as e:
-        logger.debug(f"Failed to emit camera_list after stop: {e}")
+    active = get_active_streams()
+    shared.emit_threadsafe('camera_list', { 'cameras': active })
 
 
 def get_active_streams() -> List[str]:

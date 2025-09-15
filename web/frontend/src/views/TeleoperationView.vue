@@ -55,19 +55,18 @@
             </div>
           </div>
 
-          <!-- Camera Display Options (camera feeds temporarily disabled) -->
+          <!-- Camera Display Options -->
           <div class="config-group">
             <label>Display Options</label>
             <div class="display-options">
-              <label class="checkbox-label" style="opacity:0.6;cursor:not-allowed;">
+              <label class="checkbox-label">
                 <input 
                   type="checkbox" 
                   v-model="teleoperationConfig.showCameras"
                   class="config-checkbox"
-                  disabled
                 />
-                Show Camera Feeds (disabled)
-                <small>Camera streaming temporarily disabled</small>
+                Show Camera Feeds
+                <small>Streams ALOHA cameras into the web UI</small>
               </label>
               
               <label class="checkbox-label">
@@ -142,12 +141,10 @@
       </div>
     </div>
 
-    <!-- Camera Feeds Disabled Notice -->
-    <div v-if="isOperating" class="camera-section" style="opacity:0.6;">
-      <h3><i class="bi bi-camera-video me-2"></i>Camera Feeds (disabled)</h3>
-      <div class="alert alert-info" style="margin:0;">
-        Camera streaming is currently disabled.
-      </div>
+    <!-- Camera Feeds -->
+    <div v-if="isOperating && teleoperationConfig.showCameras" class="camera-section">
+      <h3><i class="bi bi-camera-video me-2"></i>Camera Feeds</h3>
+      <CameraViewer />
     </div>
   </div>
 </template>
@@ -157,6 +154,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRobotStore } from '@/stores/robotStore'
 import robotApi from '@/services/api/robotApi'
+import CameraViewer from '@/components/dataVisualization/CameraViewer.vue'
 
 const router = useRouter()
 const robotStore = useRobotStore()
@@ -295,6 +293,8 @@ const stopTeleoperation = async () => {
     isOperating.value = false
     operationStartTime.value = null
     operationDuration.value = 0
+  // Clear any cached frames
+  robotStore.cameraStreams = {}
     console.log('✅ Teleoperation stopped successfully')
   } catch (error) {
     console.error('❌ Failed to stop teleoperation:', error)
