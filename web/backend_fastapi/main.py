@@ -56,6 +56,7 @@ service_bridge = None  # legacy bridge removed
 try:
     from modules.robot import router as robot_router
     from modules.aloha_teleoperation import router as aloha_teleoperation_router
+    from modules.aloha_teleoperation import get_teleoperation_status_snapshot
     from modules.aloha_hardware_api import router as aloha_hardware_router
     from modules.safety import router as safety_router
     from modules.monitoring import router as monitoring_router
@@ -193,6 +194,11 @@ async def _init_gui_recording_worker():  # pragma: no cover - startup hook
     except Exception as e:  # pragma: no cover
         logger.error(f"Error initializing GUI recording worker: {e}")
 
+@app.on_event("startup")
+async def _start_background_tasks():
+    # Start teleop status broadcaster
+    asyncio.create_task(_teleop_status_broadcaster())
+
 # Pydantic models for main app
 class ApiResponse(BaseModel):
     status: str
@@ -201,6 +207,18 @@ class ApiResponse(BaseModel):
 
 # Global state for Socket.IO clients
 connected_clients = set()
+
+# Background task: broadcast teleoperation status periodically
+async def _teleop_status_broadcaster():
+    while True:
+        try:
+            sio_instance = shared.get_socketio()
+            if sio_instance:
+                payload = get_teleoperation_status_snapshot()
+                await sio_instance.emit('teleoperation_status', payload)
+        except Exception:
+            logger.debug('teleoperation_status periodic emit failed', exc_info=True)
+        await asyncio.sleep(2.0)
 
 # Socket.IO event handlers
 @sio.event
@@ -216,6 +234,11 @@ async def connect(sid, environ):
         'modules': ['robot', 'teleoperation', 'safety', 'monitoring', 'recording', 'configuration'],
         'api_docs': '/api/docs'
     }, room=sid)
+    # Also push an immediate teleoperation status to new client
+    try:
+        await sio.emit('teleoperation_status', get_teleoperation_status_snapshot(), room=sid)
+    except Exception:
+        logger.debug('initial teleop status emit failed', exc_info=True)
     
     # Initial robot status intentionally not sent (legacy bridge removed)
 

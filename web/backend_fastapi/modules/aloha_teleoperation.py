@@ -31,6 +31,7 @@ from lerobot.common.robot_devices.control_utils import control_loop, ControlEven
 from . import camera_streaming
 from lerobot.scripts.control_robot import _init_rerun
 from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig
+import shared
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +95,23 @@ aloha_state = {
     }
 }
 
-# Attempt to import existing robot_service (created in modules.robot) to reuse already-connected hardware
-try:
-    from .robot import robot_service  # type: ignore
-except Exception:
-    robot_service = None  # Fallback; will create local robot if needed
+def _get_robot_service():
+    """Dynamically retrieve RobotService instance from modules.robot.
+
+    This avoids stale imports and mirrors the recorder's dynamic access pattern.
+    If the service isn't initialized yet, attempt to initialize it.
+    """
+    try:
+        from . import robot as robot_module  # type: ignore
+        rs = getattr(robot_module, "robot_service", None)
+        if rs is None:
+            init = getattr(robot_module, "initialize_services", None)
+            if callable(init):
+                init()
+                rs = getattr(robot_module, "robot_service", None)
+        return rs
+    except Exception:
+        return None
 
 def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
     """
@@ -116,11 +129,8 @@ def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
             mock=False  # Real hardware
         )
 
-        # Force a hardware reset on the cameras to handle "Device or resource busy" errors.
-        # This makes the GUI more robust if a previous process crashed or another module is connected.
-        for cam_name in robot_config.cameras:
-            if robot_config.cameras[cam_name] is not None:
-                robot_config.cameras[cam_name].force_hardware_reset = True
+    # Note: IntelRealSenseCameraConfig defaults force_hardware_reset=True.
+    # We don't override it here so that reused camera instances aren't forced to reset again.
         
         # CRITICAL: Apply operation mode overrides BEFORE robot creation
         # This must happen before the robot is instantiated
@@ -158,6 +168,39 @@ def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
     except Exception as e:
         logger.error(f"Error creating ALOHA robot config: {e}")
         raise
+
+
+def get_teleoperation_status_snapshot() -> Dict[str, Any]:
+    """Return a stable snapshot of current teleoperation state."""
+    try:
+        session_duration = time.time() - aloha_state["start_time"] if aloha_state.get("start_time") else 0
+        cfg = aloha_state.get("config") or {}
+        return {
+            "active": bool(aloha_state.get("active")),
+            "stage": aloha_state.get("stage"),
+            "robot_type": "ALOHA",
+            "configuration": cfg,
+            "performance_metrics": aloha_state.get("performance_metrics", {}),
+            "session_duration": session_duration,
+            "robot_connected": aloha_state.get("robot") is not None,
+            "owned_robot": bool(aloha_state.get("owned_robot")),
+            "display_data_active": bool(cfg.get("display_data", False)) if isinstance(cfg, dict) else False,
+        }
+    except Exception as e:
+        logger.debug(f"teleop status snapshot error: {e}")
+        return {"active": False, "stage": "idle", "robot_type": "ALOHA", "session_duration": 0}
+
+
+async def emit_teleoperation_status(room: str | None = None):
+    """Emit teleoperation_status event via Socket.IO if available."""
+    try:
+        sio = shared.get_socketio()
+        if not sio:
+            return
+        payload = get_teleoperation_status_snapshot()
+        await sio.emit("teleoperation_status", payload, room=room)
+    except Exception:
+        logger.debug("teleoperation_status emit failed", exc_info=True)
 
 def _build_robot_overrides_from_config(config: AlohaConfig) -> list[str]:
     """
@@ -199,14 +242,15 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
             logger.info("Reusing already connected robot instance for teleoperation (no reconnection)")
         else:
             # Prefer centralized RobotService so teleop/recording share the same instance
-            if robot_service is not None:
+            rs = _get_robot_service()
+            if rs is not None:
                 overrides = _build_robot_overrides_from_config(config)
                 try:
                     logger.info(f"Requesting robot via RobotService with overrides: {overrides}")
-                    result = robot_service.connect_aloha(overrides=overrides)
+                    result = rs.connect_aloha(overrides=overrides)
                     if not result.get("connected"):
                         raise RuntimeError(result.get("error") or "RobotService failed to connect")
-                    robot = robot_service.robot
+                    robot = rs.robot
                     aloha_state["robot"] = robot
                     aloha_state["owned_robot"] = False
                     logger.info("Robot acquired via RobotService (shared instance)")
@@ -360,20 +404,21 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
         
         # Determine reuse of existing robot_service robot, otherwise acquire it via RobotService
         reuse_existing = False
-        if robot_service and getattr(robot_service, 'status', {}).get('connected') and getattr(robot_service, 'robot', None):
-            aloha_state["robot"] = robot_service.robot
+        rs = _get_robot_service()
+        if rs and getattr(rs, 'status', {}).get('connected') and getattr(rs, 'robot', None):
+            aloha_state["robot"] = rs.robot
             aloha_state["owned_robot"] = False
             reuse_existing = True
             logger.info("Detected existing connected robot_service robot; will reuse for teleoperation")
-        elif robot_service:
+        elif rs:
             # Try to connect via RobotService using config-derived overrides so we don't create a second instance elsewhere
             overrides = _build_robot_overrides_from_config(config)
             try:
                 logger.info(f"No shared robot yet; connecting via RobotService with overrides: {overrides}")
-                result = robot_service.connect_aloha(overrides=overrides)
+                result = rs.connect_aloha(overrides=overrides)
                 if not result.get("connected"):
                     raise RuntimeError(result.get("error") or "RobotService failed to connect")
-                aloha_state["robot"] = robot_service.robot
+                aloha_state["robot"] = rs.robot
                 aloha_state["owned_robot"] = False
                 reuse_existing = True
                 logger.info("Robot connected via RobotService for teleoperation (shared instance)")
@@ -406,6 +451,12 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
             daemon=True
         )
         aloha_state["control_thread"].start()
+
+        # Emit status immediately after start
+        try:
+            await emit_teleoperation_status()
+        except Exception:
+            logger.debug("emit teleop status after start failed", exc_info=True)
 
         logger.info(f"ALOHA teleoperation started with config: {config.dict()}")
 
@@ -476,6 +527,12 @@ async def stop_aloha_teleoperation():
         aloha_state["active"] = False
         
         logger.info(f"ALOHA teleoperation stopped. Session duration: {session_duration:.2f}s")
+
+        # Emit status after stop
+        try:
+            await emit_teleoperation_status()
+        except Exception:
+            logger.debug("emit teleop status after stop failed", exc_info=True)
         
         return ApiResponse(
             status="success",

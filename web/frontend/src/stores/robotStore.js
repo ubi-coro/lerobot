@@ -103,6 +103,23 @@ export const useRobotStore = defineStore('robot', {
           console.log('[robotStore] Updated camera list from event:', data.cameras);
         }
       });
+      this.socket.on('teleoperation_status', (payload) => {
+        try {
+          const active = !!payload?.active;
+          this.status.mode = active ? 'teleoperating' : null;
+          // Optionally store snapshot fields used by UI
+          if (!this.status.teleoperation) this.status.teleoperation = {};
+          this.status.teleoperation = {
+            active,
+            stage: payload?.stage,
+            session_duration: payload?.session_duration ?? 0,
+            display_data_active: payload?.display_data_active ?? false,
+            configuration: payload?.configuration || null,
+          };
+        } catch (e) {
+          console.debug('[robotStore] teleoperation_status handling error:', e);
+        }
+      });
     },
 
     // Set and persist chosen robot type (UI only for now)
