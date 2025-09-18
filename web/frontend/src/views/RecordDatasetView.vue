@@ -2,7 +2,10 @@
   <div class="record-dataset-view">
     <h4>Instruction:</h4>
     <h6>
-        Under Construction
+      Fill the required fields (Repo ID, Root Path, Task) and timings, then press <em>Start Recording</em>.
+      The status panel shows overall progress and the current phase: Warmup → Recording → Resetting → Processing → Pushing (optional).
+      During recording you can <strong>Re-record</strong> to redo the current episode, <strong>Skip</strong> to move on, <strong>Stop</strong> to end, or use <strong>Emergency Stop</strong> if needed.
+      Tip: Use the folder button to pick a root. Enable <strong>Live Display</strong> to open the external viewer; enable <strong>Push to Hub</strong> to upload after completion.
     </h6>
     <div class="layout">
       <section class="config" :class="{ disabled: isActive }">
@@ -75,7 +78,12 @@
         <h2>Status</h2>
         <div v-if="!isActive && progressPct===0">Idle</div>
         <div class="overall" v-if="progressPct>0 || isActive">
-          <label>Episodes: {{ status.episode_index }} / {{ status.total_episodes || cfg.num_episodes }}</label>
+          <label>
+            Episodes: {{ status.episode_index }} / {{ status.total_episodes || cfg.num_episodes }}
+            <span v-if="status.existing_episodes != null && status.existing_episodes > 0" class="existing-total">
+              (existing total: {{ status.existing_episodes +  status.episode_index}}, new total: {{ status.existing_episodes + (status.total_episodes || cfg.num_episodes) }})
+            </span>
+          </label>
           <div class="bar"><div class="fill" :style="{width: progressPct+'%'}"></div></div>
         </div>
         <div class="episode" v-if="isActive">
@@ -192,6 +200,8 @@ section.disabled { opacity:.65; pointer-events:none; }
 .runtime-actions { display:flex; flex-wrap:wrap; gap:.55rem; }
 .overall, .episode { display:flex; flex-direction:column; gap:.5rem; }
 .overall label, .episode label { font-size:.7rem; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:#475569; }
+.overall label .existing-total { font-size:.6rem; font-weight:500; text-transform:none; margin-left:.35rem; color:#64748b; }
+body.dark-mode .overall label .existing-total { color:#94a3b8; }
 .state-line { font-size:.6rem; opacity:.55; margin-top:.4rem; letter-spacing:.05em; }
 .root-with-browse .root-row { display:flex; gap:.5rem; }
 .root-with-browse .root-input { flex:1; padding:.65rem .75rem; font-size:.8rem; }

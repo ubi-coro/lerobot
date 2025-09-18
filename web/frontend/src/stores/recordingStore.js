@@ -10,6 +10,16 @@ function validateConfig(cfg) {
   if (!cfg.episode_time_s || cfg.episode_time_s < 1) errors.episode_time_s = '>=1s';
   if (!cfg.num_episodes || cfg.num_episodes < 1) errors.num_episodes = '>=1';
   if (!cfg.root || cfg.root.trim().length === 0) errors.root = 'Root path required';
+  // Frontend best-effort check: if root exists & not resume, warn user. We cannot access filesystem directly in browser,
+  // but if the user previously started a dataset in this session (tracked in localStorage), we can infer existence.
+  try {
+    if (cfg.root && !cfg.resume) {
+      const existingDatasets = JSON.parse(localStorage.getItem('lerobot.recording.created_roots') || '[]');
+      if (existingDatasets.includes(cfg.root)) {
+        errors.root = "Dataset already exists at this root. Enable 'Resume' or change root.";
+      }
+    }
+  } catch (_) { /* ignore storage issues */ }
   return errors;
 }
 
@@ -194,6 +204,16 @@ export const useRecordingStore = defineStore('recording', {
   // enforce video true implicitly
   payload.video = true;
       sock.emit('start_recording', payload);
+      // Mark this root as used so subsequent attempts without resume will show a validation error early.
+      try {
+        if (this.config.root) {
+          const arr = JSON.parse(localStorage.getItem('lerobot.recording.created_roots') || '[]');
+          if (!arr.includes(this.config.root)) {
+            arr.push(this.config.root);
+            localStorage.setItem('lerobot.recording.created_roots', JSON.stringify(arr));
+          }
+        }
+      } catch (_) { /* ignore */ }
     },
     stop() {
       const robotStore = useRobotStore();

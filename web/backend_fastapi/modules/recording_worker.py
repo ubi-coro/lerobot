@@ -127,6 +127,8 @@ class RecordingWorkerState:
         self.last_status: Dict[str, Any] = {}
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.display_data_session_started = False
+        # When resuming, capture how many episodes already existed before starting new session
+        self.existing_dataset_episodes: int | None = None
 
     def snapshot(self) -> Dict[str, Any]:
         with self.status_lock:
@@ -141,6 +143,8 @@ class RecordingWorkerState:
                 "active": self.active,
                 "episode_index": self.episode_index,
                 "total_episodes": getattr(self.cfg, "num_episodes", 0) or 0,
+                # Episodes that were already present when starting (resume mode)
+                "existing_episodes": self.existing_dataset_episodes,
                 "episode_frames": self.episode_frames,
                 "total_frames": self.total_frames,
                 "episode_elapsed_s": episode_elapsed,
@@ -343,10 +347,11 @@ def start_recording_via_api(config: Dict[str, Any]):
                             except Exception:
                                 pass
                         else:
-                            # If it looks like an existing dataset, auto-switch to resume
+                            # If it looks like an existing dataset, require explicit resume
                             if (root_path / "meta" / "info.json").exists():
-                                logger.info("Existing dataset detected at %s; switching to resume mode", root_path)
-                                cfg.resume = True
+                                raise RuntimeError(
+                                    "Existing dataset detected at %s. Enable 'Resume' to continue adding episodes or choose a different root." % root_path
+                                )
                             else:
                                 raise RuntimeError(
                                     f"Dataset root exists and is not empty: {root_path}. "
@@ -363,6 +368,11 @@ def start_recording_via_api(config: Dict[str, Any]):
                         num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
                     )
                 sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
+                try:
+                    # Store existing episodes so UI can show a total baseline
+                    recording_worker.existing_dataset_episodes = int(getattr(dataset, 'num_episodes', 0))
+                except Exception:
+                    recording_worker.existing_dataset_episodes = None
             else:
                 sanity_check_dataset_name(cfg.repo_id, cfg.policy)
                 dataset = LeRobotDataset.create(
@@ -376,6 +386,9 @@ def start_recording_via_api(config: Dict[str, Any]):
                 )
 
             recording_worker.dataset = dataset
+            if not cfg.resume:
+                # New dataset starts with zero existing episodes
+                recording_worker.existing_dataset_episodes = 0
 
             # Monkeypatch frame counting
             orig_add_frame = dataset.add_frame
