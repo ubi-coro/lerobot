@@ -1,0 +1,1 @@
+from lerobot.robot_devices_legacy.motors.dynamixel_error_handler import *  # noqa

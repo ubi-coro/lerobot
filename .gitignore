@@ -173,3 +173,8 @@ outputs/
 
 # Dev folders
 .cache/*
+
+# Bytecode
+__pycache__/
+*.pyc
+
