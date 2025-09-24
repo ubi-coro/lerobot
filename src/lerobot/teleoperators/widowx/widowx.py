@@ -40,9 +40,9 @@ class WidowX(Teleoperator):
     name = "widowx"
 
     def __init__(self, config: WidowXConfig):
-        raise NotImplementedError
         super().__init__(config)
         self.config = config
+        # Pass existing calibration (if any) so is_calibrated check is meaningful
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
@@ -56,6 +56,7 @@ class WidowX(Teleoperator):
                 "wrist_rotate": Motor(8, "xl430-w250", MotorNormMode.RANGE_M100_100),
                 "gripper": Motor(9, "xc430-w150", MotorNormMode.RANGE_0_100),
             },
+            calibration=self.calibration,
         )
 
     @property
@@ -86,19 +87,35 @@ class WidowX(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
-        logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
+        if self.calibration:
+            # Calibration file exists, ask user whether to use it or run new calibration
+            user_input = input(
+                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
+            )
+            if user_input.strip().lower() != "c":
+                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+                self.bus.write_calibration(self.calibration)
+                return
+
+        logger.info(f"\nRunning calibration of {self}")
+        # Use extended position during calibration for all except gripper
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
+        # Leader (WidowX) acts as the neutral source of truth. All drive modes are non-inverted.
+        # The follower is responsible for adapting to its own mechanical differences.
+        drive_modes = {}
+        for motor in self.bus.motors:
+            self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
+            drive_modes[motor] = DriveMode.NON_INVERTED.value
 
-        input("Move robot to the middle of its range of motion and press ENTER....")
+
+        input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        # Motors allowed continuous range (0..4095) during calibration: base yaw and wrist rotation
+        full_turn_motors = ["waist", "wrist_rotate", "forearm_roll"]
         unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
         print(
             f"Move all joints except {full_turn_motors} sequentially through their "

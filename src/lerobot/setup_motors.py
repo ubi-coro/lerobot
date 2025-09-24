@@ -35,6 +35,8 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    viperx,
+    bi_viperx,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -42,6 +44,8 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    widowx,
+    bi_widowx,
 )
 
 COMPATIBLE_DEVICES = [
@@ -52,6 +56,10 @@ COMPATIBLE_DEVICES = [
     "so101_follower",
     "so101_leader",
     "lekiwi",
+    "viperx",
+    "bi_viperx",
+    "widowx",
+    "bi_widowx",
 ]
 
 

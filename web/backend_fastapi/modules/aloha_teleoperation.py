@@ -20,18 +20,33 @@ from typing import Optional, Dict, Any
 import logging
 import time
 import threading
+import json
 import os
+from pathlib import Path
 from enum import Enum
 
 # ALOHA-specific imports from LeRobot
-from lerobot.common.robot_devices.robots.configs import AlohaRobotConfig
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from lerobot.common.robot_devices.robots.utils import make_robot_from_config
-from lerobot.common.robot_devices.control_utils import control_loop, ControlEvents
-from . import camera_streaming
-from lerobot.scripts.control_robot import _init_rerun
-from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.utils import init_logging
+# Optional visualization dependency (rerun). Provide no-op fallbacks if unavailable.
+try:  # pragma: no cover - optional dependency guard
+    import rerun as rr  # type: ignore
+    from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+    _RERUN_AVAILABLE = True
+except Exception:
+    _RERUN_AVAILABLE = False
+    def _init_rerun(*args, **kwargs):
+        return None
+    def log_rerun_data(*args, **kwargs):
+        return None
 import shared
+from . import camera_streaming
+from . import robot as robot_module
+from . import camera_streaming
+
+# LeRobot imports are deferred to runtime inside functions to tolerate environments
+# where optional dependencies (e.g., draccus) are not installed. This keeps the
+# backend bootable so the GUI can load and the user can still access non-teleop APIs.
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +58,14 @@ def get_calibration_dir():
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file))))
     calibration_dir = os.path.join(project_root, ".cache", "calibration", "aloha_lemgo_tabea")
     return calibration_dir
+
+def load_hardware_config():
+    """Load hardware configuration from ~/.config/lerobot/hardware_config.json"""
+    config_path = Path.home() / ".config" / "lerobot" / "hardware_config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Hardware config not found at {config_path}. Please create it with your workstation's hardware settings.")
+    with open(config_path, 'r') as f:
+        return json.load(f)
 
 # Create router
 router = APIRouter(prefix="/api/aloha-teleoperation", tags=["aloha-teleoperation"])
@@ -95,78 +118,92 @@ aloha_state = {
     }
 }
 
-def _get_robot_service():
-    """Dynamically retrieve RobotService instance from modules.robot.
-
-    This avoids stale imports and mirrors the recorder's dynamic access pattern.
-    If the service isn't initialized yet, attempt to initialize it.
+def create_aloha_configs(config: AlohaConfig):
+    """
+    Create robot and teleoperator configs for ALOHA using new LeRobot factories.
+    Loads hardware settings from config file.
+    Supports bimanual, left_only, and right_only modes.
     """
     try:
-        from . import robot as robot_module  # type: ignore
-        rs = getattr(robot_module, "robot_service", None)
-        if rs is None:
-            init = getattr(robot_module, "initialize_services", None)
-            if callable(init):
-                init()
-                rs = getattr(robot_module, "robot_service", None)
-        return rs
-    except Exception:
-        return None
+        logger.info(f"Creating ALOHA configs for operation mode: {config.operation_mode}")
+        
+        # Load hardware config
+        hardware_config = load_hardware_config()
 
-def create_aloha_robot_config(config: AlohaConfig) -> AlohaRobotConfig:
-    """
-    Create ALOHA robot configuration from our config model.
-    Similar to LeLab's configuration approach but using LeRobot's ALOHA config.
-    """
-    try:
-        logger.info(f"Creating ALOHA robot config for operation mode: {config.operation_mode}")
+        # Lazy import LeRobot factories and configs
+        try:
+            from lerobot.robots.utils import make_robot_from_config  # noqa: F401
+            from lerobot.teleoperators.utils import make_teleoperator_from_config  # noqa: F401
+            from lerobot.robots.bi_viperx.config_bi_viperx import BiViperXConfig
+            from lerobot.teleoperators.bi_widowx.config_bi_widowx import BiWidowXConfig
+            from lerobot.robots.viperx.config_viperx import ViperXConfig
+            from lerobot.teleoperators.widowx.config_widowx import WidowXConfig
+        except Exception as dep_err:
+            raise RuntimeError(
+                "LeRobot hardware dependencies are not available. "
+                "Install the project with the appropriate extras (e.g., `pip install -e .[all]` or at least motors/robots extras) "
+                f"to enable teleoperation. Details: {dep_err}"
+            )
         
-        # Create base ALOHA configuration
-        robot_config = AlohaRobotConfig(
-            calibration_dir=config.calibration_dir,
-            max_relative_target=config.max_relative_target,
-            moving_time=config.moving_time,
-            mock=False  # Real hardware
-        )
-
-    # Note: IntelRealSenseCameraConfig defaults force_hardware_reset=True.
-    # We don't override it here so that reused camera instances aren't forced to reset again.
-        
-        # CRITICAL: Apply operation mode overrides BEFORE robot creation
-        # This must happen before the robot is instantiated
-        original_leader_arms = robot_config.leader_arms.copy()
-        original_follower_arms = robot_config.follower_arms.copy()
-        
-        if config.operation_mode == OperationMode.LEFT_ONLY:
-            # Keep only left arm configurations
-            robot_config.leader_arms = {k: v for k, v in original_leader_arms.items() if k == "left"}
-            robot_config.follower_arms = {k: v for k, v in original_follower_arms.items() if k == "left"}
-            logger.info(f"✅ LEFT-ONLY: Filtered arms from {list(original_leader_arms.keys())} to {list(robot_config.leader_arms.keys())}")
+        if config.operation_mode == OperationMode.BIMANUAL:
+            # Use bimanual configs
+            robot_config = BiViperXConfig(
+                id=hardware_config.get("follower_id"),
+                left_arm_port=hardware_config["ports"]["follower_left"],
+                right_arm_port=hardware_config["ports"]["follower_right"],
+                left_arm_max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
+                right_arm_max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
+                cameras=hardware_config.get("cameras", {})
+            )
+            teleop_config = BiWidowXConfig(
+                id=hardware_config.get("leader_id"),
+                left_arm_port=hardware_config["ports"]["leader_left"],
+                right_arm_port=hardware_config["ports"]["leader_right"],
+                calibration_dir=Path(hardware_config.get("calibration_dir", get_calibration_dir())),
+            )
+            logger.info("BIMANUAL mode: using both arms with bi_widowx/bi_viperx")
+            
+        elif config.operation_mode == OperationMode.LEFT_ONLY:
+            # Use single-arm configs for left arm
+            robot_config = ViperXConfig(
+                id=hardware_config.get("follower_left_id", hardware_config.get("follower_id")),
+                port=hardware_config["ports"]["follower_left"],
+                max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
+                cameras=hardware_config.get("cameras", {})
+            )
+            teleop_config = WidowXConfig(
+                id=hardware_config.get("leader_left_id", hardware_config.get("leader_id")),
+                port=hardware_config["ports"]["leader_left"],
+                calibration_dir=Path(hardware_config.get("calibration_dir", get_calibration_dir())),
+            )
+            logger.info("LEFT_ONLY mode: using left arm with widowx/viperx")
             
         elif config.operation_mode == OperationMode.RIGHT_ONLY:
-            # Keep only right arm configurations  
-            robot_config.leader_arms = {k: v for k, v in original_leader_arms.items() if k == "right"}
-            robot_config.follower_arms = {k: v for k, v in original_follower_arms.items() if k == "right"}
-            logger.info(f"✅ RIGHT-ONLY: Filtered arms from {list(original_leader_arms.keys())} to {list(robot_config.leader_arms.keys())}")
-            
-        else:
-            # Bimanual - keep all arms
-            logger.info(f"✅ BIMANUAL: Keeping all arms {list(robot_config.leader_arms.keys())}")
+            # Use single-arm configs for right arm
+            robot_config = ViperXConfig(
+                id=hardware_config.get("follower_right_id", hardware_config.get("follower_id")),
+                port=hardware_config["ports"]["follower_right"],
+                max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
+                cameras=hardware_config.get("cameras", {})
+            )
+            teleop_config = WidowXConfig(
+                id=hardware_config.get("leader_right_id", hardware_config.get("leader_id")),
+                port=hardware_config["ports"]["leader_right"],
+                calibration_dir=Path(hardware_config.get("calibration_dir", get_calibration_dir())),
+            )
+            logger.info("RIGHT_ONLY mode: using right arm with widowx/viperx")
         
-        # Handle cameras based on config.
-        # If display_data is true, we need the cameras for the rerun window,
-        # regardless of the show_cameras setting (which is for the web UI).
+        # Handle cameras
         if not config.show_cameras and not config.display_data:
-            # Completely disable cameras for ALOHA when not needed
             robot_config.cameras = {}
-            logger.info("🎥 Cameras disabled (show_cameras=False and display_data=False)")
+            logger.info("Cameras disabled")
         else:
-            logger.info("🎥 Cameras enabled (show_cameras=True or display_data=True)")
+            logger.info("Cameras enabled")
             
-        return robot_config
+        return robot_config, teleop_config
         
     except Exception as e:
-        logger.error(f"Error creating ALOHA robot config: {e}")
+        logger.error(f"Error creating ALOHA configs: {e}")
         raise
 
 
@@ -183,6 +220,7 @@ def get_teleoperation_status_snapshot() -> Dict[str, Any]:
             "performance_metrics": aloha_state.get("performance_metrics", {}),
             "session_duration": session_duration,
             "robot_connected": aloha_state.get("robot") is not None,
+            "teleop_connected": aloha_state.get("teleop") is not None,
             "owned_robot": bool(aloha_state.get("owned_robot")),
             "display_data_active": bool(cfg.get("display_data", False)) if isinstance(cfg, dict) else False,
         }
@@ -202,190 +240,99 @@ async def emit_teleoperation_status(room: str | None = None):
     except Exception:
         logger.debug("teleoperation_status emit failed", exc_info=True)
 
-def _build_robot_overrides_from_config(config: AlohaConfig) -> list[str]:
-    """
-    Map Aloha teleop config to RobotService.connect_aloha overrides so the
-    robot is instantiated with the correct arms/cameras and motion params.
-
-    Supported override patterns in RobotService:
-      - key=value for scalar attrs (e.g., max_relative_target, moving_time, calibration_dir)
-      - ~dict.key to remove entries from dicts (e.g., ~leader_arms.right)
-      - cameras={} to disable all cameras cleanly
-    """
-    overrides: list[str] = []
-    # Calibration dir (explicit, avoids relying on env var)
-    if config.calibration_dir:
-        overrides.append(f"calibration_dir={config.calibration_dir}")
-    # Motion params
-    if config.max_relative_target is not None:
-        overrides.append(f"max_relative_target={int(config.max_relative_target)}")
-    overrides.append(f"moving_time={float(config.moving_time)}")
-    # Arm selection
-    if config.operation_mode == OperationMode.LEFT_ONLY:
-        overrides += ["~leader_arms.right", "~follower_arms.right"]
-    elif config.operation_mode == OperationMode.RIGHT_ONLY:
-        overrides += ["~leader_arms.left", "~follower_arms.left"]
-    # Camera enable/disable: if neither UI streaming nor rerun is desired, drop cameras
-    if not config.show_cameras and not config.display_data:
-        overrides.append("cameras={}")
-    return overrides
-
-
 def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
     """
     Worker thread for ALOHA teleoperation.
-    This function now integrates with LeRobot's control_loop for proper functionality.
+    This function now uses new LeRobot factories for robot and teleoperator.
     """
     try:
+        # Lazy imports here too
+        from lerobot.robots.utils import make_robot_from_config
+        from lerobot.teleoperators.utils import make_teleoperator_from_config
+        robot = None
+        teleop = None
         if reuse_existing and aloha_state["robot"] is not None:
             robot = aloha_state["robot"]
             logger.info("Reusing already connected robot instance for teleoperation (no reconnection)")
-        else:
-            # Strict: require RobotService; no direct creation fallback
-            rs = _get_robot_service()
-            if rs is None:
-                raise RuntimeError("RobotService not available; cannot start teleoperation")
-            overrides = _build_robot_overrides_from_config(config)
-            logger.info(f"Requesting robot via RobotService with overrides: {overrides}")
-            result = rs.connect_aloha(overrides=overrides)
-            if not result.get("connected"):
-                raise RuntimeError(result.get("error") or "RobotService failed to connect")
-            robot = rs.robot
-            aloha_state["robot"] = robot
+            # Still create the teleoperator and connect it
+            _, teleop_config = create_aloha_configs(config)
+            teleop = make_teleoperator_from_config(teleop_config)
+            teleop.connect(calibrate=False)
+            aloha_state["teleop"] = teleop
             aloha_state["owned_robot"] = False
-            logger.info("Robot acquired via RobotService (shared instance)")
+            logger.info("Teleoperator created and connected; robot reused from RobotService")
+        else:
+            # Create robot and teleoperator using new factories
+            robot_config, teleop_config = create_aloha_configs(config)
+            robot = make_robot_from_config(robot_config)
+            teleop = make_teleoperator_from_config(teleop_config)
+            
+            # Connect them; avoid auto-calibration to prevent interactive prompts in GUI
+            # Avoid auto-calibration to prevent interactive prompts during GUI sessions
+            robot.connect(calibrate=False)
+            teleop.connect(calibrate=False)
+            
+            aloha_state["robot"] = robot
+            aloha_state["teleop"] = teleop
+            aloha_state["owned_robot"] = True
+            logger.info("Robot and teleoperator created and connected using new factories")
 
-        # 2. Prepare for LeRobot's control_loop
-        # Create a control config object that control_loop understands
-        control_cfg = TeleoperateControlConfig(
-            fps=config.fps,
-            display_data=config.display_data,
-        )
-
-        # This is the key: We MUST initialize rerun here, just like control_robot.py does.
-        # control_loop() only logs to an existing session, it does not create one.
-        if control_cfg.display_data:
+        # 2. Prepare for teleoperation loop
+        # Initialize rerun if display_data is enabled
+        if config.display_data and _RERUN_AVAILABLE:
             logger.info("🖥️ display_data=true: Initializing LeRobot's rerun session...")
-            # Using the same session name as the official script for consistency.
-            _init_rerun(control_config=control_cfg, session_name="lerobot_control_loop_teleop")
+            _init_rerun(session_name="lerobot_control_loop_teleop")
             logger.info("✅ LeRobot rerun session initialized.")
 
-        # Create a custom event object to allow stopping the loop from our API
-        class StoppableControlEvents(ControlEvents):
-            def update(self):
-                super().update()
-                if aloha_state["stop_event"].is_set():
-                    self["exit_early"] = True
-
-        events = StoppableControlEvents({"exit_early": False})
-        # Store events so stop endpoint can signal immediate exit
-        aloha_state["events"] = events
-
-        # Start camera streams if requested in config (treat show_cameras purely as streaming toggle)
+        # Start camera streams if requested
         try:
             if config.show_cameras:
-                # Default camera streaming fps: min(control loop fps, 12)
                 cam_fps = min(config.fps, 12)
-                try:
-                    cam_keys = list(getattr(robot, 'cameras', {}).keys())
-                    logger.info(f"Camera devices available on robot: {cam_keys}")
-                except Exception:
-                    logger.info("No robot.cameras introspection available")
-                # Pick camera set based on operation mode
-                camera_ids = None
-                try:
-                    available = set(getattr(robot, 'cameras', {}).keys()) if hasattr(robot, 'cameras') else set()
-                except Exception:
-                    available = set()
-
-                def pick_first(keys, *needles):
-                    for k in keys:
-                        low = k.lower()
-                        if all(n in low for n in needles):
-                            return k
-                    return None
-
-                # Preferred canonical names
-                top = None
-                low = None
-                lwrist = None
-                rwrist = None
-                if available:
-                    # Exact preferred names
-                    if 'cam_high' in available:
-                        top = 'cam_high'
-                    if 'cam_low' in available:
-                        low = 'cam_low'
-                    if 'cam_left_wrist' in available:
-                        lwrist = 'cam_left_wrist'
-                    if 'cam_right_wrist' in available:
-                        rwrist = 'cam_right_wrist'
-                    # Heuristics if missing
-                    top = top or pick_first(available, 'high') or pick_first(available, 'top') or pick_first(available, 'overhead')
-                    low = low or pick_first(available, 'low')
-                    lwrist = lwrist or pick_first(available, 'left', 'wrist') or pick_first(available, 'wrist', 'left')
-                    rwrist = rwrist or pick_first(available, 'right', 'wrist') or pick_first(available, 'wrist', 'right')
-
-                if config.operation_mode == OperationMode.BIMANUAL:
-                    # Stream all available canonical cameras
-                    desired = [c for c in [top, low, lwrist, rwrist] if c]
-                    camera_ids = desired if desired else None
-                elif config.operation_mode == OperationMode.LEFT_ONLY:
-                    desired = [c for c in [top, low, lwrist] if c]
-                    camera_ids = desired if desired else None
-                    if desired:
-                        logger.info(f"Single-arm LEFT: streaming {desired} (3 if available)")
-                elif config.operation_mode == OperationMode.RIGHT_ONLY:
-                    desired = [c for c in [top, low, rwrist] if c]
-                    camera_ids = desired if desired else None
-                    if desired:
-                        logger.info(f"Single-arm RIGHT: streaming {desired} (3 if available)")
-                else:
-                    camera_ids = None  # default to all
-
-                camera_streaming.start_streams(robot, fps=cam_fps, camera_ids=camera_ids)
-                logger.info(f"Started camera streaming (fps={cam_fps}) for cameras: {camera_streaming.get_active_streams()}")
+                camera_streaming.start_streams(robot, fps=cam_fps)
+                logger.info(f"Started camera streaming (fps={cam_fps})")
         except Exception as e:
             logger.warning(f"Failed to start camera streaming: {e}")
 
-        # 3. Run LeRobot's main control loop in short segments to allow responsive stop
+        # 3. Simple teleoperation loop (similar to teleoperate.py)
         aloha_state["stage"] = "running"
-        logger.info(f"Starting segmented teleoperation loop (fps={control_cfg.fps}, display_data={control_cfg.display_data})")
-        segment_seconds = 1.0  # run control loop in 1s segments
+        logger.info(f"Starting teleoperation loop (fps={config.fps}, display_data={config.display_data})")
+        loop_count = 0
+        
         while not aloha_state["stop_event"].is_set():
-            seg_start = time.perf_counter()
-            control_loop(
-                robot=robot,
-                teleoperate=True,
-                display_data=control_cfg.display_data,
-                fps=control_cfg.fps,
-                events=events,
-                control_time_s=segment_seconds,
-            )
-            seg_end = time.perf_counter()
-            elapsed = max(seg_end - seg_start, 1e-6)
-
-            # Update simple performance metrics
+            loop_start = time.perf_counter()
+            
+            # Get action from teleoperator
+            action = teleop.get_action()
+            
+            # Get observation if displaying data
+            if config.display_data:
+                observation = robot.get_observation()
+                log_rerun_data(observation, action)
+            
+            # Send action to robot
+            robot.send_action(action)
+            
+            # Control timing
+            dt_s = time.perf_counter() - loop_start
+            busy_wait(1 / config.fps - dt_s)
+            
+            loop_s = time.perf_counter() - loop_start
+            loop_count += 1
+            
+            # Update performance metrics
             try:
-                # Approximate current FPS relative to target based on overrun/underrun
-                ratio = segment_seconds / elapsed
-                fps_inst = max(0.0, min(control_cfg.fps * ratio, control_cfg.fps * 1.1))  # clamp to prevent spikes
-
                 pm = aloha_state.get("performance_metrics", {})
                 prev_avg = float(pm.get("average_fps", 0.0) or 0.0)
-                # Exponential moving average
+                fps_inst = 1.0 / loop_s if loop_s > 0 else 0.0
                 avg = (0.8 * prev_avg) + (0.2 * fps_inst)
                 pm["average_fps"] = avg
-                pm["frames_processed"] = float(pm.get("frames_processed", 0.0) or 0.0) + (fps_inst * elapsed)
-                over_ms = max(0.0, (elapsed - segment_seconds) * 1000.0)
+                pm["frames_processed"] = float(pm.get("frames_processed", 0.0) or 0.0) + 1
+                over_ms = max(0.0, (loop_s - (1 / config.fps)) * 1000.0)
                 pm["latency_ms"] = over_ms
                 pm["last_joint_update"] = time.time()
                 aloha_state["performance_metrics"] = pm
             except Exception:
                 pass
-            # Additional early exit if events flagged exit_early
-            if events["exit_early"]:
-                break
 
     except Exception as e:
         logger.error(f"Error in ALOHA teleoperation worker: {e}", exc_info=True)
@@ -397,17 +344,29 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
         except Exception as e:
             logger.debug(f"Error stopping camera streams: {e}")
 
-        # Only disconnect hardware if we created it here
+        # Shutdown rerun if it was initialized
+        if config.display_data and _RERUN_AVAILABLE:
+            try:
+                rr.rerun_shutdown()
+            except Exception as e:
+                logger.debug(f"Error shutting down rerun: {e}")
+
         if 'robot' in locals() and aloha_state.get("owned_robot") and robot.is_connected:
             try:
                 robot.disconnect()
                 logger.info("Disconnected owned robot instance after teleoperation")
             except Exception as e:
                 logger.warning(f"Error disconnecting owned robot: {e}")
-        if not aloha_state.get("owned_robot"):
+        if 'teleop' in locals() and aloha_state.get("owned_robot"):
+            try:
+                teleop.disconnect()
+                logger.info("Disconnected owned teleoperator instance after teleoperation")
+            except Exception as e:
+                logger.warning(f"Error disconnecting owned teleoperator: {e}")
             logger.info("Leaving shared robot connected (owned by RobotService)")
         if aloha_state.get("owned_robot"):
             aloha_state["robot"] = None
+            aloha_state["teleop"] = None
         aloha_state["owned_robot"] = False
         aloha_state["active"] = False
         aloha_state["stop_event"].clear()
@@ -458,32 +417,26 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
                 logger.info(f"Reducing FPS from {config.fps} to 30 for single-arm operation to improve performance")
                 config.fps = 30
         
-        # Determine reuse of existing robot_service robot, otherwise acquire it via RobotService
+        # Determine reuse of existing robot_service robot, otherwise create new
         reuse_existing = False
-        rs = _get_robot_service()
-        if not rs:
-            return ApiResponse(status="error", message="RobotService unavailable; connect the robot first")
-        if getattr(rs, 'status', {}).get('connected') and getattr(rs, 'robot', None):
-            aloha_state["robot"] = rs.robot
-            aloha_state["owned_robot"] = False
-            reuse_existing = True
-            logger.info("Detected existing connected robot_service robot; will reuse for teleoperation")
-        else:
-            overrides = _build_robot_overrides_from_config(config)
-            result = rs.connect_aloha(overrides=overrides)
-            if not result.get("connected"):
-                return ApiResponse(status="error", message="Failed to connect via RobotService", data=result)
-            aloha_state["robot"] = rs.robot
-            aloha_state["owned_robot"] = False
-            reuse_existing = True
-            logger.info("Robot connected via RobotService for teleoperation (shared instance)")
+        try:
+            # Use the shared RobotService instance if available and connected
+            if getattr(robot_module, "robot_service", None) and robot_module.robot_service.status.get("connected"):
+                # If we don't already have a robot in teleop state, reuse robot_service.robot
+                if not aloha_state.get("robot"):
+                    aloha_state["robot"] = getattr(robot_module.robot_service, "robot", None)
+                reuse_existing = aloha_state["robot"] is not None
+                if reuse_existing:
+                    logger.info("Shared RobotService robot detected; will reuse for teleoperation")
+        except Exception:
+            # Fallback to create new
+            reuse_existing = False
 
         # Start teleoperation state
         aloha_state["active"] = True
         aloha_state["config"] = config.dict()
         aloha_state["start_time"] = time.time()
         aloha_state["stop_event"].clear()
-        aloha_state["events"] = None  # will be set by worker once created
         aloha_state["stage"] = "initializing"
 
         # Reset performance metrics
@@ -495,13 +448,9 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
         }
 
         # Start worker thread (LeLab-style threading)
-        if not reuse_existing:
-            # Shouldn't happen due to strict RobotService policy
-            return ApiResponse(status="error", message="Robot not available for teleoperation")
-
         aloha_state["control_thread"] = threading.Thread(
             target=aloha_teleoperation_worker,
-            args=(config, True),
+            args=(config, reuse_existing),
             daemon=True
         )
         aloha_state["control_thread"].start()
@@ -552,12 +501,6 @@ async def stop_aloha_teleoperation():
         
         # Signal stop (LeLab-style)
         aloha_state["stop_event"].set()
-        if aloha_state.get("events") is not None:
-            # Directly request early exit
-            try:
-                aloha_state["events"]["exit_early"] = True
-            except Exception:
-                pass
         
         # Wait for thread to finish
         if aloha_state["control_thread"] and aloha_state["control_thread"].is_alive():
@@ -625,6 +568,7 @@ async def get_aloha_status():
                 time.time() - aloha_state["start_time"] if aloha_state["start_time"] else 0
             ),
             "robot_connected": aloha_state["robot"] is not None,
+            "teleop_connected": aloha_state.get("teleop") is not None,
             "owned_robot": aloha_state.get("owned_robot"),
             "display_data_active": aloha_state["config"].get("display_data", False) if aloha_state["config"] else False
         }

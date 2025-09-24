@@ -11,18 +11,33 @@ message but does not raise (the API layer will surface the info).
 """
 
 from __future__ import annotations
-import logging, os, threading, time
+import json
+import logging
+import os
+import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 try:
-    from lerobot.common.robot_devices.robots.configs import AlohaRobotConfig
-    from lerobot.common.robot_devices.robots.utils import make_robot_from_config
+    from lerobot.robots.bi_viperx.config_bi_viperx import BiViperXConfig
+    from lerobot.robots.utils import make_robot_from_config
 except Exception as e:  # pragma: no cover - dependency/import environment issues
-    AlohaRobotConfig = None  # type: ignore
+    BiViperXConfig = None  # type: ignore
     make_robot_from_config = None  # type: ignore
     logger.warning(f"Robot dependencies not available: {e}")
+
+
+def load_hardware_config():
+    """Load hardware configuration from ~/.config/lerobot/hardware_config.json"""
+    config_path = Path.home() / ".config" / "lerobot" / "hardware_config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Hardware config not found at {config_path}. Please create it with your workstation's hardware settings."
+        )
+    with open(config_path, "r") as f:
+        return json.load(f)
 
 
 class RobotService:
@@ -51,33 +66,20 @@ class RobotService:
                     "cameras": self.status["cameras"],
                 }
 
-            if make_robot_from_config is None or AlohaRobotConfig is None:
+            if make_robot_from_config is None or BiViperXConfig is None:
                 err = "LeRobot hardware packages not importable (check installation)."
                 logger.error(err)
                 self.status["error"] = err
                 return {"connected": False, "error": err}
 
             try:
-                project_root = self._find_project_root()
-                # Allow override through environment variable LEROBOT_CALIB_DIR
-                env_calib = os.getenv("LEROBOT_CALIB_DIR")
-                if env_calib:
-                    calibration_dir = env_calib
-                    logger.info(f"Using calibration dir from LEROBOT_CALIB_DIR: {calibration_dir}")
-                else:
-                    calibration_dir = os.path.join(project_root, ".cache", "calibration", "aloha_lemgo_tabea")
-                    logger.info(f"Using default calibration dir: {calibration_dir}")
+                # Load hardware config
+                hardware_config = load_hardware_config()
 
-                if not os.path.isdir(calibration_dir):
-                    raise FileNotFoundError(
-                        "Calibration directory not found: {} (set LEROBOT_CALIB_DIR to override)".format(calibration_dir)
-                    )
-
-                self.robot_cfg = AlohaRobotConfig(
-                    calibration_dir=calibration_dir,
-                    max_relative_target=25,
-                    moving_time=0.1,
-                    mock=self.use_mock,
+                self.robot_cfg = BiViperXConfig(
+                    left_arm_port=hardware_config["ports"]["follower_left"],
+                    right_arm_port=hardware_config["ports"]["follower_right"],
+                    cameras=hardware_config.get("cameras", {}),
                 )
 
                 # Apply simple overrides (only supports key=value or ~dict.key removal like legacy)
@@ -95,12 +97,13 @@ class RobotService:
 
                 self.robot = make_robot_from_config(self.robot_cfg)
                 logger.info("Connecting to robot hardware (ALOHA)...")
-                self.robot.connect()
+                self.robot.connect(calibrate=False)
 
                 self.status["connected"] = True
                 self.status["error"] = None
-                self.status["available_arms"] = list(self.robot.leader_arms.keys()) + list(self.robot.follower_arms.keys())
-                if getattr(self.robot, 'cameras', None):
+                # For BiViperX, arms are left and right
+                self.status["available_arms"] = ["left", "right"]
+                if hasattr(self.robot, 'cameras') and self.robot.cameras:
                     self.status["cameras"] = [{"id": name, "name": name} for name in self.robot.cameras.keys()]
                 else:
                     self.status["cameras"] = []

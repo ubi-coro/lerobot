@@ -24,6 +24,7 @@ from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
+    DriveMode,
 )
 
 from ..robot import Robot
@@ -45,7 +46,6 @@ class ViperX(Robot):
         self,
         config: ViperXConfig,
     ):
-        raise NotImplementedError
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(
@@ -61,6 +61,7 @@ class ViperX(Robot):
                 "wrist_rotate": Motor(8, "xm430-w350", MotorNormMode.RANGE_M100_100),
                 "gripper": Motor(9, "xm430-w350", MotorNormMode.RANGE_0_100),
             },
+            calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -109,16 +110,43 @@ class ViperX(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch
-        logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
+        if self.calibration:
+            user_input = input(
+                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
+            )
+            if user_input.strip().lower() != "c":
+                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+                self.bus.write_calibration(self.calibration)
+                return
+
+        logger.info(f"\nRunning calibration of {self}")
+        # Put all (except gripper) in extended position mode for safe full-range exploration
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+
+        # To compensate for the ViperX's outward-facing motors compared to the WidowX's inward-facing ones,
+        # we invert the primary shoulder and elbow motors.
+        primary_inverted_joints = ["shoulder", "elbow"]
+
+        # The shadow motors are mechanically coupled. To ensure they assist rather than oppose the primary
+        # motors, they must have the opposite Drive_Mode. Because the primaries are inverted, the shadows
+        # must be non-inverted.
+        drive_modes = {}
+        for motor in self.bus.motors:
+            if motor in primary_inverted_joints:
+                # Invert primary motors to match leader's world-frame motion
+                self.bus.write("Drive_Mode", motor, DriveMode.INVERTED.value)
+                drive_modes[motor] = DriveMode.INVERTED.value
+            else:
+                # All other motors, including the crucial shadow motors, should be non-inverted.
+                self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
+                drive_modes[motor] = DriveMode.NON_INVERTED.value
 
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        full_turn_motors = ["waist", "wrist_rotate", "forearm_roll"]
         unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
         print(
             f"Move all joints except {full_turn_motors} sequentially through their entire "
@@ -128,12 +156,15 @@ class ViperX(Robot):
         for motor in full_turn_motors:
             range_mins[motor] = 0
             range_maxes[motor] = 4095
+        for motor in unknown_range_motors:
+            range_mins[motor] = max(0, range_mins[motor])
+            range_maxes[motor] = min(4095, range_maxes[motor])
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
-                drive_mode=0,
+                drive_mode=drive_modes[motor],
                 homing_offset=homing_offsets[motor],
                 range_min=range_mins[motor],
                 range_max=range_maxes[motor],
@@ -155,7 +186,7 @@ class ViperX(Robot):
 
             # Set a velocity limit of 131 as advised by Trossen Robotics
             # TODO(aliberts): remove as it's actually useless in position control
-            self.bus.write("Velocity_Limit", 131)
+            # self.bus.write("Velocity_Limit", 131)
 
             # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
             # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
@@ -170,6 +201,9 @@ class ViperX(Robot):
             # complete grasp (both gripper fingers are ordered to join and reach a touch).
             self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
 
+            # We intentionally DO NOT overwrite Drive_Mode here; calibration already stored all zeros
+            # for follower. Leaving this untouched ensures hardware-level alignment with leader.
+
     def get_observation(self) -> dict[str, Any]:
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
@@ -178,11 +212,19 @@ class ViperX(Robot):
         obs_dict = {}
 
         # Read arm position
+        # start = time.perf_counter()
+        # obs_dict[OBS_STATE] = self.bus.sync_read("Present_Position")
+        # obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        # dt_ms = (time.perf_counter() - start) * 1e3
+        # logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+
+
         start = time.perf_counter()
-        obs_dict[OBS_STATE] = self.bus.sync_read("Present_Position")
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        motor_pos = self.bus.sync_read("Present_Position")
+        obs_dict.update({f"{motor}.pos": val for motor, val in motor_pos.items()})
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -209,7 +251,24 @@ class ViperX(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+    # No software mirroring: physical drive_mode differences between leader & follower
+    # already achieve consistent Cartesian motion.
+
+        # Only command primary joints; shadow motors follow via Secondary_ID.
+        allowed_motors = {
+            "waist",
+            "shoulder",
+            "elbow",
+            "forearm_roll",
+            "wrist_angle",
+            "wrist_rotate",
+            "gripper",
+        }
+        goal_pos = {
+            key.removesuffix(".pos"): val
+            for key, val in action.items()
+            if key.endswith(".pos") and key.removesuffix(".pos") in allowed_motors
+        }
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.

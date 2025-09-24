@@ -24,7 +24,7 @@ from ..config import RobotConfig
 class ViperXConfig(RobotConfig):
     port: str  # Port to connect to the arm
 
-    disable_torque_on_disconnect: bool = True
+    disable_torque_on_disconnect: bool = False
 
     # /!\ FOR SAFETY, READ THIS /!\
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
@@ -36,7 +36,9 @@ class ViperXConfig(RobotConfig):
     # Also, everything is expected to work safely out-of-the-box, but we highly advise to
     # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
-    max_relative_target: float | dict[str, float] = 5.0
+    max_relative_target: float | dict[str, float] = 25.0
+
+    use_degrees: bool = False
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

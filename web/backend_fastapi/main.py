@@ -36,9 +36,17 @@ import sys
 import os
 from pathlib import Path
 
-# Add backend_fastapi to Python path for imports
+# Add backend_fastapi and project src/ to Python path for imports
 backend_path = Path(__file__).parent
 sys.path.insert(0, str(backend_path))
+# Ensure `lerobot` (under repo src/) is importable when running backend directly
+try:
+    project_root = backend_path.parent.parent  # .../web/backend_fastapi -> repo root
+    src_path = project_root / "src"
+    if src_path.exists():
+        sys.path.insert(0, str(src_path))
+except Exception:
+    pass
 
 # Import shared state module
 import shared
@@ -133,15 +141,19 @@ app.include_router(recording_router)
 app.include_router(configuration_router)
 app.include_router(dataset_router, prefix="/api/dataset", tags=["dataset"])
 
-# Optionally serve built frontend (production mode) if dist exists
+# Optionally serve built frontend (production mode) if explicitly enabled
 try:
-    frontend_dist = Path(__file__).resolve().parent.parent / 'frontend' / 'dist'
-    if frontend_dist.exists():
-        # Mount at / to serve frontend at root
-        app.mount('/', StaticFiles(directory=frontend_dist, html=True), name='frontend')
-        logger.info(f"✅ Mounted frontend dist at / (path={frontend_dist})")
+    if os.getenv("LEROBOT_GUI_SERVE_FRONTEND") == "1":
+        frontend_dist = Path(__file__).resolve().parent.parent / 'frontend' / 'dist'
+        if frontend_dist.exists():
+            app.mount('/', StaticFiles(directory=frontend_dist, html=True), name='frontend')
+            logger.info(f"✅ Mounted frontend dist at / (path={frontend_dist})")
+        else:
+            logger.warning("LEROBOT_GUI_SERVE_FRONTEND=1 set but dist/ not found; run 'npm run build' in web/frontend")
+    else:
+        logger.info("Frontend dev mode: not serving dist/ from backend (use Vite dev server on :5173)")
 except Exception as e:
-    logger.warning(f"⚠️ Could not mount frontend dist: {e}")
+    logger.warning(f"⚠️ Frontend mount setup skipped: {e}")
 
 # Socket.IO server with CORS support
 sio = socketio.AsyncServer(
