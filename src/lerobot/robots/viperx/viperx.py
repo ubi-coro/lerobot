@@ -251,8 +251,8 @@ class ViperX(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-    # No software mirroring: physical drive_mode differences between leader & follower
-    # already achieve consistent Cartesian motion.
+        # No software mirroring: physical drive_mode differences between leader & follower
+        # already achieve consistent Cartesian motion.
 
         # Only command primary joints; shadow motors follow via Secondary_ID.
         allowed_motors = {
@@ -279,7 +279,9 @@ class ViperX(Robot):
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+        # Return the full original action (including shadows) for dataset compatibility.
+        # Shadows are recorded as commanded, even though not sent (they follow via Secondary_ID).
+        return action
 
     def disconnect(self):
         if not self.is_connected:

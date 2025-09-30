@@ -28,10 +28,10 @@ class BiViperXConfig(RobotConfig):
     right_arm_port: str
 
     # Optional
-    left_arm_disable_torque_on_disconnect: bool = True
+    left_arm_disable_torque_on_disconnect: bool = False
     left_arm_max_relative_target: float | dict[str, float] | None = None
     left_arm_use_degrees: bool = False
-    right_arm_disable_torque_on_disconnect: bool = True
+    right_arm_disable_torque_on_disconnect: bool = False
     right_arm_max_relative_target: float | dict[str, float] | None = None
     right_arm_use_degrees: bool = False
 
