@@ -178,3 +178,7 @@ outputs/
 __pycache__/
 *.pyc
 
+*.stl
+*.urdf
+*.xml
+*.part
