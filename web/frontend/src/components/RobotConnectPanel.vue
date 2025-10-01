@@ -12,7 +12,9 @@
         <div class="robot-type-picker" v-if="!isConnected">
           <label class="rt-label">Robot Type</label>
           <select v-model="selectedType" @change="onTypeChange">
-            <option value="aloha">ALOHA</option>
+            <option value="aloha_bimanual">ALOHA Bimanual</option>
+            <option value="aloha_right">ALOHA Single Right</option>
+            <option value="aloha_left">ALOHA Single Left</option>
             <option value="koch" disabled>Koch</option>
             <option value="koch_bimanual" disabled>Koch Bimanual</option>
             <option value="so101" disabled>So101</option>
@@ -54,7 +56,14 @@ import robotApi from '@/services/api/robotApi';
 const robotStore = useRobotStore();
 const busy = ref(false);
 const error = ref('');
-const selectedType = ref(robotStore.robotType || 'aloha');
+
+const ROBOT_LABELS = {
+  aloha_bimanual: 'ALOHA Bimanual',
+  aloha_left: 'ALOHA Single Left',
+  aloha_right: 'ALOHA Single Right'
+};
+
+const selectedType = ref(robotStore.robotType || 'aloha_bimanual');
 
 const isConnected = computed(()=> robotStore.status.connected);
 // Mirror TeleoperationView naming for exact design parity
@@ -80,8 +89,15 @@ const statusMessage = computed(() => {
   if (busy.value) return 'Establishing connection to robot hardware';
   if (error.value) return 'Unable to connect to robot';
   if (isConnected.value) return 'Ready for operations';
-  return `Click Connect Robot to begin (type: ${selectedType.value.toUpperCase()})`;
+  const label = ROBOT_LABELS[selectedType.value] || selectedType.value.toUpperCase();
+  return `Click Connect Robot to begin (type: ${label})`;
 });
+
+function deriveOperationMode(type){
+  if (type === 'aloha_left') return 'left_only';
+  if (type === 'aloha_right') return 'right_only';
+  return 'bimanual';
+}
 
 async function connect(){
   try {
@@ -90,12 +106,13 @@ async function connect(){
     if (!robotStore.configs || robotStore.configs.length === 0){
       await robotStore.fetchRobotConfigs();
     }
-    // Mirror TeleoperationView connect signature: first param operation mode, second settings
-    const defaultMode = 'bimanual';
-    const cameras = (robotStore.availableCameras || []).map(c => c.id) || [];
-  const response = await robotApi.connect(defaultMode, {
-      arms: ['left','right'],
-      cameras
+    const operationMode = deriveOperationMode(selectedType.value);
+    robotStore.setRobotType(selectedType.value);
+    const response = await robotApi.connect(operationMode, {
+      robot_type: selectedType.value,
+      show_cameras: true,
+      fps: 30,
+      force_reconnect: true
     });
     if (response.data.status !== 'success') {
       throw new Error(response.data.message || 'Connect failed');
@@ -111,7 +128,7 @@ async function connect(){
 }
 
 async function disconnect(){
-  try { await robotStore.disconnectRobot(); } catch(e){ /* ignore */ }
+  try { await robotStore.disconnectRobot(); } catch { /* ignore */ }
 }
 
 function onTypeChange(){

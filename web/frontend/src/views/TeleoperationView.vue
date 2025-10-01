@@ -2,7 +2,7 @@
   <div class="teleoperation-view">
     <h4>Instruction:</h4>
     <h6>
-      Configure how you want to control the robot (bimanual or single arm), choose the environment, and optional external data display. Press <em>Start Teleoperation</em> to begin; hit the <kbd>Space</kbd> bar anytime for an emergency stop.
+      The connection panel decides whether you operate bimanual or single arm. Pick your environment and any display options, then press <em>Start Teleoperation</em>; hit the <kbd>Space</kbd> bar anytime for an emergency stop.
     </h6>
     
 
@@ -14,25 +14,6 @@
         <h3><i class="bi bi-sliders me-2"></i>Teleoperation Settings</h3>
         
         <div class="config-grid">
-          <!-- Operation Mode -->
-          <div class="config-group">
-            <label>Operation Mode</label>
-            <div class="mode-selector">
-              <button 
-                v-for="mode in operationModes" 
-                :key="mode.value"
-                :class="['mode-btn', { active: teleoperationConfig.operationMode === mode.value }]"
-                @click="teleoperationConfig.operationMode = mode.value"
-              >
-                <div class="mode-icon">{{ mode.icon }}</div>
-                <div class="mode-info">
-                  <span class="mode-name">{{ mode.name }}</span>
-                  <span class="mode-desc">{{ mode.description }}</span>
-                </div>
-              </button>
-            </div>
-          </div>
-
           <!-- Environment Type -->
           <div class="config-group">
             <label>Environment</label>
@@ -147,12 +128,10 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useRobotStore } from '@/stores/robotStore'
 import robotApi from '@/services/api/robotApi'
 import CameraViewer from '@/components/dataVisualization/CameraViewer.vue'
 
-const router = useRouter()
 const robotStore = useRobotStore()
 // Removed storeToRefs usage (not imported) – we access reactive store state directly.
 
@@ -161,15 +140,10 @@ const isStarting = ref(false)
 const isOperating = ref(false)
 const operationStartTime = ref(null)
 const operationDuration = ref(0)
-const fpsTarget = computed(() => {
-  const cfg = robotStore.status?.teleoperation?.configuration
-  return (cfg && typeof cfg.fps === 'number') ? cfg.fps : 30
-})
 const teleopStatus = computed(() => robotStore.status?.teleoperation || {})
 
 // Teleoperation configuration
 const teleoperationConfig = ref({
-  operationMode: 'bimanual',
   environment: 'real',
   showCameras: false, // disabled by default
   displayData: false  // External LeRobot display window
@@ -188,44 +162,32 @@ watch(() => teleoperationConfig.value.displayData, (newValue) => {
   }
 })
 
-// Available operation modes
-const operationModes = ref([
-  {
-    value: 'bimanual',
-    name: 'Bimanual',
-    icon: '',
-    description: 'Control both arms simultaneously'
-  },
-  {
-    value: 'right_arm',
-    name: 'Right Arm',
-    icon: '',
-    description: 'Control right arm only'
-  },
-  {
-    value: 'left_arm',
-    name: 'Left Arm',
-    icon: '',
-    description: 'Control left arm only'
+const deriveOperationModeForTeleop = () => {
+  const status = robotStore.status || {}
+  const rawMode = status.mode
+  if (rawMode) {
+    const lowered = String(rawMode).toLowerCase()
+    if (lowered.includes('left')) return 'left_only'
+    if (lowered.includes('right')) return 'right_only'
+    if (lowered.includes('bi') || lowered.includes('dual')) return 'bimanual'
   }
-])
 
-// Cameras: prefer those reported by backend status; fallback to common ALOHA camera IDs
-const fallbackCameras = [
-  { id: 'cam_high', name: 'Top View' },
-  { id: 'cam_right_wrist', name: 'Right Wrist' },
-  { id: 'cam_left_wrist', name: 'Left Wrist' },
-  { id: 'cam_low', name: 'Low View' }
-]
-const availableCameras = computed(() => {
-  const cams = robotStore.status.cameras || []
-  if (!cams.length) return fallbackCameras
-  // Normalize possible string list into objects
-  return cams.map(c => (typeof c === 'string' ? { id: c, name: c } : c))
+  const arms = Array.isArray(status.available_arms) ? status.available_arms : []
+  if (arms.length === 1) {
+    const arm = String(arms[0]).toLowerCase()
+    if (arm.includes('left')) return 'left_only'
+    if (arm.includes('right')) return 'right_only'
+  }
+
+  return 'bimanual'
+}
+
+const readableOperationMode = computed(() => {
+  const effective = deriveOperationModeForTeleop()
+  if (effective === 'left_only') return 'Left Arm'
+  if (effective === 'right_only') return 'Right Arm'
+  return 'Bimanual'
 })
-
-// Computed properties
-// Removed connection status computations
 
 // Methods
 // Connection / disconnection handled elsewhere
@@ -235,7 +197,7 @@ const startTeleoperation = async () => {
   
   try {
     const config = {
-      operation_mode: teleoperationConfig.value.operationMode,
+      operation_mode: deriveOperationModeForTeleop(),
       show_cameras: teleoperationConfig.value.showCameras,
       display_data: teleoperationConfig.value.displayData,  // Add display_data parameter
       fps: 30,
@@ -316,14 +278,7 @@ const emergencyStop = async () => {
   }
 }
 
-const openCalibration = () => {
-  router.push('/calibration')
-}
-
-const getCurrentModeDisplay = () => {
-  const mode = operationModes.value.find(m => m.value === teleoperationConfig.value.operationMode)
-  return mode ? mode.name : teleoperationConfig.value.operationMode
-}
+const getCurrentModeDisplay = () => readableOperationMode.value
 
 const formatDuration = (seconds) => {
   const mins = Math.floor(seconds / 60)
@@ -352,13 +307,6 @@ const stopDurationTracking = () => {
 }
 
 // Lifecycle
-const mapBackendModeToUi = (m) => {
-  if (!m) return 'bimanual'
-  if (m === 'right_only' || m === 'right_arm') return 'right_arm'
-  if (m === 'left_only' || m === 'left_arm') return 'left_arm'
-  return 'bimanual'
-}
-
 const startStatusPolling = () => {
   if (window.teleoperationStatusInterval) return
   window.teleoperationStatusInterval = setInterval(async () => {
@@ -376,7 +324,7 @@ const startStatusPolling = () => {
         operationStartTime.value = Date.now() - Math.floor(s.session_duration) * 1000
       }
   // FPS metrics come via teleopStatus from socket and config; no direct assignment needed here
-    } catch (e) {
+    } catch {
       // ignore transient errors
     }
   }, 2000)
@@ -398,7 +346,6 @@ const syncTeleopStatus = async () => {
       // Restore config snapshot if available
       if (s.configuration) {
         const cfg = s.configuration
-        teleoperationConfig.value.operationMode = mapBackendModeToUi(cfg.operation_mode)
         teleoperationConfig.value.showCameras = !!cfg.show_cameras
         teleoperationConfig.value.displayData = !!cfg.display_data
       }
@@ -415,7 +362,7 @@ const syncTeleopStatus = async () => {
       isOperating.value = false
       stopStatusPolling()
     }
-  } catch (e) {
+  } catch {
     // If status endpoint fails, leave current UI state unchanged
   }
 }
@@ -522,57 +469,6 @@ onUnmounted(() => {
 .config-group label {
   font-weight: 600;
   color: #374151;
-}
-
-/* Mode Selector */
-.mode-selector {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.85rem; /* slightly tighter */
-}
-
-.mode-btn {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  padding: 0.85rem 0.9rem; /* slightly reduced */
-  background: white;
-  border: 2px solid #e5e7eb;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.mode-btn:hover {
-  border-color: #3b82f6;
-  background: #eff6ff;
-}
-
-.mode-btn.active {
-  border-color: #3b82f6;
-  background: #dbeafe;
-}
-
-.mode-icon {
-  font-size: 2rem;
-}
-
-.mode-info {
-  flex: 1;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.mode-name {
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.mode-desc {
-  font-size: 0.85rem;
-  color: #6b7280;
 }
 
 /* Environment Selector */

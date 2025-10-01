@@ -120,88 +120,53 @@ aloha_state = {
 
 def create_aloha_configs(config: AlohaConfig):
     """
-    Create robot and teleoperator configs for ALOHA using new LeRobot factories.
-    Loads hardware settings from config file.
-    Supports bimanual, left_only, and right_only modes.
+    Create robot and teleoperator configs for ALOHA using the new unified configuration system.
     """
     try:
         logger.info(f"Creating ALOHA configs for operation mode: {config.operation_mode}")
-        
-        # Load hardware config
-        hardware_config = load_hardware_config()
 
-        # Lazy import LeRobot factories and configs
-        try:
-            from lerobot.robots.utils import make_robot_from_config  # noqa: F401
-            from lerobot.teleoperators.utils import make_teleoperator_from_config  # noqa: F401
-            from lerobot.robots.bi_viperx.config_bi_viperx import BiViperXConfig
-            from lerobot.teleoperators.bi_widowx.config_bi_widowx import BiWidowXConfig
-            from lerobot.robots.viperx.config_viperx import ViperXConfig
-            from lerobot.teleoperators.widowx.config_widowx import WidowXConfig
-        except Exception as dep_err:
-            raise RuntimeError(
-                "LeRobot hardware dependencies are not available. "
-                "Install the project with the appropriate extras (e.g., `pip install -e .[all]` or at least motors/robots extras) "
-                f"to enable teleoperation. Details: {dep_err}"
-            )
+        # Import new configuration system
+        import sys
+        import os
+        # Add the backend directory to the path so we can import config modules
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
         
-        if config.operation_mode == OperationMode.BIMANUAL:
-            # Use bimanual configs
-            robot_config = BiViperXConfig(
-                id=hardware_config.get("follower_id"),
-                left_arm_port=hardware_config["ports"]["follower_left"],
-                right_arm_port=hardware_config["ports"]["follower_right"],
-                left_arm_max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
-                right_arm_max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
-                cameras=hardware_config.get("cameras", {})
-            )
-            teleop_config = BiWidowXConfig(
-                id=hardware_config.get("leader_id"),
-                left_arm_port=hardware_config["ports"]["leader_left"],
-                right_arm_port=hardware_config["ports"]["leader_right"],
-                calibration_dir=Path(hardware_config.get("calibration_dir", get_calibration_dir())),
-            )
-            logger.info("BIMANUAL mode: using both arms with bi_widowx/bi_viperx")
+        from config_resolver import resolve
+        from lerobot_adapter import to_lerobot_configs
+        from config_models import TeleopRequest
+
+        # Map AlohaConfig to TeleopRequest
+        # Convert operation_mode from enum to string and map to TeleopRequest format
+        op_mode_str = str(config.operation_mode.value) if hasattr(config.operation_mode, 'value') else str(config.operation_mode)
+        if op_mode_str == "left_only":
+            teleop_op_mode = "left"
+        elif op_mode_str == "right_only":
+            teleop_op_mode = "right"
+        else:  # "bimanual"
+            teleop_op_mode = "bimanual"
             
-        elif config.operation_mode == OperationMode.LEFT_ONLY:
-            # Use single-arm configs for left arm
-            robot_config = ViperXConfig(
-                id=hardware_config.get("follower_left_id", hardware_config.get("follower_id")),
-                port=hardware_config["ports"]["follower_left"],
-                max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
-                cameras=hardware_config.get("cameras", {})
-            )
-            teleop_config = WidowXConfig(
-                id=hardware_config.get("leader_left_id", hardware_config.get("leader_id")),
-                port=hardware_config["ports"]["leader_left"],
-                calibration_dir=Path(hardware_config.get("calibration_dir", get_calibration_dir())),
-            )
-            logger.info("LEFT_ONLY mode: using left arm with widowx/viperx")
-            
-        elif config.operation_mode == OperationMode.RIGHT_ONLY:
-            # Use single-arm configs for right arm
-            robot_config = ViperXConfig(
-                id=hardware_config.get("follower_right_id", hardware_config.get("follower_id")),
-                port=hardware_config["ports"]["follower_right"],
-                max_relative_target=hardware_config.get("max_relative_target", config.max_relative_target or 25),
-                cameras=hardware_config.get("cameras", {})
-            )
-            teleop_config = WidowXConfig(
-                id=hardware_config.get("leader_right_id", hardware_config.get("leader_id")),
-                port=hardware_config["ports"]["leader_right"],
-                calibration_dir=Path(hardware_config.get("calibration_dir", get_calibration_dir())),
-            )
-            logger.info("RIGHT_ONLY mode: using right arm with widowx/viperx")
-        
-        # Handle cameras
-        if not config.show_cameras and not config.display_data:
-            robot_config.cameras = {}
-            logger.info("Cameras disabled")
-        else:
-            logger.info("Cameras enabled")
-            
+        req = TeleopRequest(
+            operation_mode=teleop_op_mode,
+            display_data=config.display_data,
+            fps=config.fps,
+            robot_type="bi_viperx" if teleop_op_mode == "bimanual" else "viperx",
+            teleop_type="bi_widowx" if teleop_op_mode == "bimanual" else "widowx",
+            cameras_enabled=config.show_cameras,
+            profile_name="bi_viperx" if teleop_op_mode == "bimanual" else ("viperx_left" if teleop_op_mode == "left" else "viperx_right")
+        )
+
+        # Resolve configuration through layers
+        robot, teleop, runtime = resolve(req)
+
+        # Convert to LeRobot configs
+        robot_config, teleop_config = to_lerobot_configs(robot, teleop)
+
+        logger.info(f"Resolved configuration: robot={robot.type} ({robot.id}), teleop={teleop.type} ({teleop.id})")
+
         return robot_config, teleop_config
-        
+
     except Exception as e:
         logger.error(f"Error creating ALOHA configs: {e}")
         raise
@@ -420,16 +385,19 @@ async def start_aloha_teleoperation(request: AlohaStartRequest):
         # Determine reuse of existing robot_service robot, otherwise create new
         reuse_existing = False
         try:
-            # Use the shared RobotService instance if available and connected
-            if getattr(robot_module, "robot_service", None) and robot_module.robot_service.status.get("connected"):
-                # If we don't already have a robot in teleop state, reuse robot_service.robot
-                if not aloha_state.get("robot"):
-                    aloha_state["robot"] = getattr(robot_module.robot_service, "robot", None)
-                reuse_existing = aloha_state["robot"] is not None
-                if reuse_existing:
-                    logger.info("Shared RobotService robot detected; will reuse for teleoperation")
+            # Import robot module to access global robot instance
+            from . import robot as robot_module
+            shared_robot = getattr(robot_module, "robot", None)
+            if shared_robot and getattr(shared_robot, "is_connected", False):
+                if aloha_state.get("robot") is not shared_robot:
+                    aloha_state["robot"] = shared_robot
+                reuse_existing = True
+                logger.info("Shared robot instance detected; will reuse for teleoperation")
+            else:
+                aloha_state["robot"] = None
         except Exception:
-            # Fallback to create new
+            # Fallback to create new robot instance
+            aloha_state["robot"] = None
             reuse_existing = False
 
         # Start teleoperation state

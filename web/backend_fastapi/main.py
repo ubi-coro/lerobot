@@ -206,6 +206,17 @@ else:
 # Create Socket.IO ASGI app
 socket_app = socketio.ASGIApp(sio, app)
 
+
+@app.on_event("startup")
+async def _register_shared_event_loop():
+    """Ensure shared modules know about the running event loop for thread-safe emits."""
+    try:
+        loop = asyncio.get_running_loop()
+        shared.set_event_loop(loop)
+    except Exception:
+        logger.debug("Failed to register shared event loop", exc_info=True)
+
+
 @app.on_event("startup")
 async def _init_gui_recording_worker():  # pragma: no cover - startup hook
     try:

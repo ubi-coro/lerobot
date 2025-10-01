@@ -5,7 +5,7 @@ import robotApi from '@/services/api/robotApi';
 export const useRobotStore = defineStore('robot', {
   state: () => ({
     configs: [],
-  selectedRobotType: (typeof localStorage !== 'undefined' && localStorage.getItem('lerobot.selectedRobotType')) || 'aloha',
+  selectedRobotType: (typeof localStorage !== 'undefined' && localStorage.getItem('lerobot.selectedRobotType')) || 'aloha_bimanual',
     status: {
       connected: false,
       available_arms: [],
@@ -128,7 +128,7 @@ export const useRobotStore = defineStore('robot', {
 
     // Set and persist chosen robot type (UI only for now)
     setRobotType(type) {
-      this.selectedRobotType = type || 'aloha';
+  this.selectedRobotType = type || 'aloha_bimanual';
       try { localStorage.setItem('lerobot.selectedRobotType', this.selectedRobotType); } catch (_) {}
     },
 
@@ -159,7 +159,19 @@ export const useRobotStore = defineStore('robot', {
       try {
         this.internalHasError = false;
         this.internalErrorMessage = '';
-    const response = await robotApi.connect(operationMode, connectOptions);
+
+        const requestOptions = {
+          robot_type: connectOptions.robot_type || this.selectedRobotType || 'aloha_bimanual',
+          profile_name: connectOptions.profile_name || null,
+          show_cameras: connectOptions.show_cameras !== false,
+          display_data: !!connectOptions.display_data,
+          fps: connectOptions.fps || 30,
+          calibrate: !!connectOptions.calibrate,
+          force_reconnect: connectOptions.force_reconnect !== false,
+          overrides: connectOptions.overrides || []
+        };
+
+        const response = await robotApi.connect(operationMode, requestOptions);
 
         if (response.data.status === 'success') {
           this.status = { ...this.status, ...response.data.data };
@@ -169,7 +181,7 @@ export const useRobotStore = defineStore('robot', {
           this.internalErrorMessage = response.data.message || 'Connection failed';
         }
       } catch (error) {
-  console.error('Error connecting to robot:', error);
+        console.error('Error connecting to robot:', error);
         this.internalHasError = true;
         this.internalErrorMessage = error.response?.data?.message || 'Connection failed';
       }

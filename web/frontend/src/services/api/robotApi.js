@@ -143,14 +143,19 @@ export default {
   connect(operationMode = 'bimanual', configSettings = {}) {
     console.log('Calling connect with operation mode:', operationMode);
     console.log('Calling connect with config settings:', configSettings);
-    
-    // Convert operation mode and config settings to the expected format
+
     const connectRequest = {
-      overrides: configSettings.overrides || [],
-      leader_only: operationMode === 'leader_only' || configSettings.leader_only || false,
-      show_cameras: configSettings.show_cameras !== false // Default to true unless explicitly false
+      robot_type: configSettings.robot_type || 'aloha',
+      operation_mode: operationMode,
+      profile_name: configSettings.profile_name || null,
+      show_cameras: configSettings.show_cameras !== false,
+      display_data: !!configSettings.display_data,
+      fps: configSettings.fps || 30,
+      calibrate: !!configSettings.calibrate,
+      force_reconnect: !!configSettings.force_reconnect,
+      overrides: configSettings.overrides || []
     };
-    
+
     return apiCall('/connect', {
       method: 'POST',
       body: connectRequest

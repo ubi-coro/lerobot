@@ -39,24 +39,24 @@ def get_event_loop() -> Optional[asyncio.AbstractEventLoop]:
     return _loop
 
 
-def run_coro_threadsafe(coro):
+def run_coro_threadsafe(coro) -> bool:
     """Schedule an asyncio coroutine from any thread on the stored event loop.
 
-    Silently no-ops if no loop is available or it's not running (e.g., during shutdown).
+    Returns True if the coroutine was scheduled, False otherwise.
     """
     try:
         loop = get_event_loop() or asyncio.get_event_loop()
     except RuntimeError:
         # No default loop in this thread
         loop = get_event_loop()
-    if not loop:
-        return
+    if not loop or not loop.is_running():
+        return False
     try:
-        if loop.is_running():
-            asyncio.run_coroutine_threadsafe(coro, loop)
+        asyncio.run_coroutine_threadsafe(coro, loop)
+        return True
     except Exception:
         # Ignore scheduling errors (e.g., loop closing during shutdown)
-        pass
+        return False
 
 
 def emit_threadsafe(event: str, data: Any, *, room: Optional[str] = None, namespace: Optional[str] = None):
@@ -71,4 +71,9 @@ def emit_threadsafe(event: str, data: Any, *, room: Optional[str] = None, namesp
         coro = sio.emit(event, data, room=room, namespace=namespace)
     except Exception:
         return
-    run_coro_threadsafe(coro)
+    scheduled = run_coro_threadsafe(coro)
+    if not scheduled:
+        try:
+            coro.close()
+        except Exception:
+            pass

@@ -1,351 +1,347 @@
 """
-Robot Connection and Hardware Management Module
-==============================================
+Unified robot connection API for the LeRobot GUI.
 
-Handles robot connection, disconnection, and hardware-level operations.
-Extracted from main.py for better organization.
+This module now routes all hardware connections through the layered configuration
+resolver so that the GUI can request bimanual or single-arm setups explicitly.
 """
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+
 import logging
-import sys
 import os
-import importlib
+import sys
 
-# Import shared state
+# Ensure the backend root is on sys.path so we can import config helpers
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
 import shared
+from config_resolver import (
+    resolve,
+    normalize_operation_mode,
+    profile_for_mode,
+)
+from config_models import TeleopRequest
+from lerobot_adapter import to_lerobot_configs
 
-# Attempt multiple import strategies for RobotService to ensure hardware path loads.
-RobotService = None  # type: ignore
-StreamService = None  # placeholder (not yet implemented)
-
-_robot_import_attempts = [
-    "backend_fastapi.services.robot_service_fastapi:RobotService",
-    "services.robot_service_fastapi:RobotService",
-    "robot_service_fastapi:RobotService",
-    "..services:RobotService",  # relative fallback
-]
-
-for spec in _robot_import_attempts:
-    if RobotService:
-        break
-    module_name, attr = spec.split(":")
-    try:
-        if module_name.startswith(".."):
-            try:
-                from ..services import RobotService as RS  # type: ignore
-                RobotService = RS
-                logging.getLogger(__name__).info(f"Loaded RobotService via relative import ({module_name})")
-                break
-            except Exception as e:  # pragma: no cover
-                logging.getLogger(__name__).debug(f"Relative import failed ({module_name}): {e}")
-                continue
-        mod = importlib.import_module(module_name)
-        RobotService = getattr(mod, attr, None)
-        if RobotService:
-            logging.getLogger(__name__).info(f"Loaded RobotService from {module_name}")
-    except Exception as e:  # pragma: no cover
-        logging.getLogger(__name__).debug(f"RobotService import attempt failed ({module_name}): {e}")
-
-if RobotService is None:
-    class RobotService:  # type: ignore
-        """Lightweight mock robot service so GUI can operate without hardware.
-
-        Provides the subset of attributes/methods used by the API layer.
-        """
-        def __init__(self, use_mock: bool = True, socketio=None):
-            self.use_mock = use_mock
-            self.socketio = socketio
-            self.status = {
-                "connected": False,
-                "available_arms": ["left", "right"],
-                "cameras": [],
-                "error": None,
-                "mode": None
-            }
-
-        def connect_aloha(self, overrides: list[str] | None = None):
-            # Simulate a successful mock connection (not real hardware)
-            self.status["connected"] = False  # keep False to signal mock_mode
-            self.status["error"] = None
-            return {
-                "connected": False,
-                "available_arms": self.status["available_arms"],
-                "cameras": self.status["cameras"],
-                "error": None,
-            }
-
-        def disconnect(self):
-            self.status["connected"] = False
-            self.status["mode"] = None
-
-    class StreamService:  # type: ignore
-        def __init__(self, socketio=None):
-            self.socketio = socketio
-        def start_camera_stream(self, *a, **k):
-            return False
-        def stop_camera_stream(self, *a, **k):
-            return False
-    # Ensure logger defined before use
-    logging.getLogger(__name__).info("Using mock RobotService/StreamService (legacy services removed)")
+try:  # pragma: no cover - optional hardware dependency
+    from lerobot.robots.utils import make_robot_from_config
+    _LEROBOT_AVAILABLE = True
+except Exception as exc:  # pragma: no cover
+    make_robot_from_config = None  # type: ignore
+    _LEROBOT_AVAILABLE = False
+    logging.getLogger(__name__).warning(
+        "LeRobot hardware stack unavailable: %s", exc
+    )
 
 logger = logging.getLogger(__name__)
-
-# Create router
 router = APIRouter(prefix="/api/robot", tags=["robot"])
 
-# Pydantic models
+
 class ApiResponse(BaseModel):
     status: str
     message: str
     data: Optional[Dict[str, Any]] = None
 
+
 class ConnectRequest(BaseModel):
-    overrides: Optional[List[str]] = []
-    leader_only: Optional[bool] = False
-    show_cameras: Optional[bool] = True
+    """Incoming payload for the connect endpoint."""
 
-# Global service instances
-robot_service = None
-stream_service = None
+    robot_type: str = Field(
+        default="aloha", description="Logical robot family requested by the GUI"
+    )
+    operation_mode: str = Field(
+        default="bimanual", description="Desired operation mode (bimanual/left/right)"
+    )
+    profile_name: Optional[str] = Field(
+        default=None, description="Optional hardware profile override"
+    )
+    show_cameras: bool = Field(
+        default=True, description="Enable cameras when resolving the hardware profile"
+    )
+    display_data: bool = Field(
+        default=False, description="Forward display preference to teleoperation runtime"
+    )
+    fps: int = Field(default=30, ge=1, le=120, description="Target control loop FPS")
+    calibrate: bool = Field(
+        default=False, description="Allow hardware calibration prompts on connect"
+    )
+    force_reconnect: bool = Field(
+        default=False, description="Disconnect and recreate the robot even if matching"
+    )
+    overrides: List[str] = Field(
+        default_factory=list,
+        description="Reserved for legacy override strings (kept for compatibility)",
+    )
 
-def initialize_services():
-    """Initialize robot and stream services.
 
-    Picks real hardware unless LEROBOT_GUI_FORCE_MOCK=1
-    or RobotService import failed.
-    """
-    global robot_service, stream_service
+class DisconnectRequest(BaseModel):
+    shutdown: bool = False
 
-    if RobotService and not robot_service:
-        force_mock = os.getenv("LEROBOT_GUI_FORCE_MOCK") == "1"
-        robot_service = RobotService(use_mock=force_mock)
-        logger.info("Robot service initialized (mock=%s)", force_mock)
 
-    if StreamService and not stream_service:
-        socketio_instance = shared.get_socketio()
-        if socketio_instance:
-            stream_service = StreamService(socketio_instance)
-            logger.info("Stream service initialized")
-        else:
-            logger.debug("Socket.IO instance not yet available for StreamService")
+# ---------------------------------------------------------------------------
+# Runtime state
+# ---------------------------------------------------------------------------
+robot = None  # Exposed so other modules (teleoperation) can reuse the instance
+_robot_state: Dict[str, Any] = {
+    "connected": False,
+    "mock_mode": False,
+    "mode": None,
+    "profile": None,
+    "robot_type": None,
+    "runtime": {},
+    "available_arms": [],
+    "cameras": [],
+    "robot_cfg": None,
+    "teleop_cfg": None,
+}
 
-@router.on_event("startup")
-async def startup_event():
-    """Initialize services on router startup"""
-    initialize_services()
+
+def _arms_for_mode(mode: Optional[str]) -> List[str]:
+    if mode == "left":
+        return ["left"]
+    if mode == "right":
+        return ["right"]
+    return ["left", "right"]
+
+
+def _build_status(extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    data = {
+        "connected": _robot_state["connected"],
+        "mock_mode": _robot_state["mock_mode"],
+        "mode": _robot_state["mode"],
+        "profile": _robot_state["profile"],
+        "robot_type": _robot_state["robot_type"],
+        "available_arms": _robot_state["available_arms"],
+        "cameras": _robot_state["cameras"],
+        "runtime": _robot_state["runtime"],
+    }
+    if extra:
+        data.update(extra)
+    return data
+
+
+def _reset_state() -> None:
+    _robot_state.update(
+        {
+            "connected": False,
+            "mock_mode": False,
+            "mode": None,
+            "profile": None,
+            "robot_type": None,
+            "runtime": {},
+            "available_arms": [],
+            "cameras": [],
+            "robot_cfg": None,
+            "teleop_cfg": None,
+        }
+    )
+
+
+def _resolve_hardware(request: ConnectRequest, normalized_mode: str):
+    profile = request.profile_name or profile_for_mode(normalized_mode)
+    teleop_request = TeleopRequest(
+        operation_mode=normalized_mode,
+        display_data=request.display_data,
+        fps=request.fps,
+        robot_type="bi_viperx" if normalized_mode == "bimanual" else "viperx",
+        teleop_type="bi_widowx" if normalized_mode == "bimanual" else "widowx",
+        cameras_enabled=request.show_cameras,
+        profile_name=profile,
+    )
+    robot_cfg, teleop_cfg, runtime_cfg = resolve(teleop_request)
+    robot_config, teleop_config = to_lerobot_configs(robot_cfg, teleop_cfg)
+    return profile, robot_cfg, teleop_cfg, runtime_cfg, robot_config, teleop_config
+
+
+def current_operation_mode() -> Optional[str]:
+    """Expose the active robot mode for other modules (e.g. teleoperation)."""
+    return _robot_state.get("mode")
+
+
+def resolved_configs() -> Dict[str, Any]:
+    """Return the last resolved Pydantic configs for debugging or reuse."""
+    return {
+        "robot_cfg": _robot_state.get("robot_cfg"),
+        "teleop_cfg": _robot_state.get("teleop_cfg"),
+        "runtime": _robot_state.get("runtime"),
+    }
+
 
 @router.post("/connect", response_model=ApiResponse)
 async def connect_robot(request: ConnectRequest):
-    """
-    Connect to ALOHA robot with enhanced configuration options
-    
-    Features:
-    - Override configuration support
-    - Leader-only mode option
-    - Camera display control
-    - Error handling and validation
-    """
-    try:
-        logger.info(f"Connecting robot with overrides: {request.overrides}")
-        
-        if not robot_service:
-            initialize_services()
-            
-        if not robot_service:
-            # Should not happen because initialize_services creates mock, but guard anyway.
-            raise HTTPException(
-                status_code=503, 
-                detail="Robot service not available. Check LeRobot installation."
+    """Connect to the robot using the layered configuration system."""
+
+    normalized_mode = normalize_operation_mode(request.operation_mode)
+    logger.info(
+        "Connecting robot (type=%s, mode=%s, profile=%s)",
+        request.robot_type,
+        normalized_mode,
+        request.profile_name,
+    )
+
+    global robot
+    already_connected = robot and getattr(robot, "is_connected", False)
+    if already_connected:
+        same_mode = _robot_state.get("mode") == normalized_mode
+        if same_mode and not request.force_reconnect:
+            logger.info("Robot already connected; reusing existing session")
+            return ApiResponse(
+                status="success",
+                message="Robot already connected",
+                data=_build_status(),
             )
-        
-        # Connect to robot with basic configuration
-        result = robot_service.connect_aloha(
-            overrides=request.overrides or []
+        # Disconnect the existing session before reconnecting
+        try:
+            robot.disconnect()
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Error while disconnecting previous robot: %s", exc)
+        finally:
+            robot = None
+            _reset_state()
+
+    try:
+        profile, robot_cfg, teleop_cfg, runtime_cfg, robot_config, _ = _resolve_hardware(
+            request, normalized_mode
         )
-        
-        # Check if connection was successful
-        is_connected = result.get("connected", False)
-        error_message = result.get("error", None)
-        
-        if is_connected:
-            logger.info("Robot connected successfully")
-            message = "Robot connected successfully"
-        else:
-            if error_message:
-                logger.warning(f"Robot hardware connection failed: {error_message}")
-                message = "Robot hardware connection failed; mock mode"
-            else:
-                message = "Robot not connected (mock mode)"
-        
-        return ApiResponse(
-            status="success",
-            message=message,
-            data={
-                "connected": is_connected,
-                "mock_mode": not is_connected,
-                "leader_only": request.leader_only,
-                "cameras_enabled": request.show_cameras,
-                "overrides": request.overrides,
-                "error": error_message,
-                **result
+        if not _LEROBOT_AVAILABLE or make_robot_from_config is None:
+            raise RuntimeError(
+                "LeRobot hardware dependencies are not installed for this environment"
+            )
+
+        robot_instance = make_robot_from_config(robot_config)
+        robot_instance.connect(calibrate=request.calibrate)
+
+        robot = robot_instance
+        _robot_state.update(
+            {
+                "connected": True,
+                "mock_mode": False,
+                "mode": normalized_mode,
+                "profile": profile,
+                "robot_type": request.robot_type,
+                "runtime": runtime_cfg,
+                "available_arms": _arms_for_mode(normalized_mode),
+                "cameras": list(robot_cfg.cameras.keys()),
+                "robot_cfg": robot_cfg,
+                "teleop_cfg": teleop_cfg,
             }
         )
-        
-    except Exception as e:
-        logger.error(f"Robot connection failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to connect robot: {str(e)}"
+        try:
+            shared.emit_threadsafe("camera_list", {"cameras": _robot_state["cameras"]})
+        except Exception:
+            logger.debug("Failed to emit camera list on connect", exc_info=True)
+        logger.info(
+            "Robot connected successfully (mode=%s, profile=%s)",
+            normalized_mode,
+            profile,
         )
-
-@router.post("/disconnect", response_model=ApiResponse)
-async def disconnect_robot():
-    """
-    Disconnect from robot and cleanup resources
-    
-    Features:
-    - Graceful disconnection
-    - Resource cleanup
-    - Status validation
-    """
-    try:
-        logger.info("Disconnecting robot")
-        
-        if not robot_service:
-            return ApiResponse(
-                status="info",
-                message="Robot was not connected",
-                data={"connected": False}
-            )
-        
-        # Disconnect robot
-        robot_service.disconnect()
-        
-        logger.info("Robot disconnected successfully")
         return ApiResponse(
             status="success",
-            message="Robot disconnected successfully",
-            data={"connected": False}
+            message=f"Robot connected ({normalized_mode})",
+            data=_build_status(),
         )
-        
-    except Exception as e:
-        logger.error(f"Robot disconnection failed: {e}")
+    except Exception as exc:
+        logger.error("Robot connection failed: %s", exc, exc_info=True)
+        _reset_state()
+        _robot_state.update(
+            {
+                "connected": False,
+                "mock_mode": True,
+                "mode": normalized_mode,
+                "profile": request.profile_name or profile_for_mode(normalized_mode),
+                "robot_type": request.robot_type,
+                "available_arms": _arms_for_mode(normalized_mode),
+            }
+        )
+        return ApiResponse(
+            status="success",
+            message="Robot hardware unavailable; mock mode",
+            data=_build_status({"error": str(exc)}),
+        )
+
+
+@router.post("/disconnect", response_model=ApiResponse)
+async def disconnect_robot(_: DisconnectRequest = DisconnectRequest()):
+    """Disconnect from the robot and reset runtime state."""
+
+    global robot
+    try:
+        if robot and getattr(robot, "is_connected", False):
+            robot.disconnect()
+            logger.info("Robot disconnected successfully")
+        robot = None
+        _reset_state()
+        return ApiResponse(
+            status="success",
+            message="Robot disconnected",
+            data=_build_status(),
+        )
+    except Exception as exc:
+        logger.error("Robot disconnection failed: %s", exc)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to disconnect robot: {str(e)}"
+            detail=f"Failed to disconnect robot: {exc}",
         )
+
 
 @router.get("/status", response_model=ApiResponse)
 async def get_robot_status():
-    """
-    Get current robot connection and health status
-    
-    Returns:
-    - Connection status
-    - Hardware health
-    - Service availability
-    - Mock mode indicator
-    """
-    try:
-        if not robot_service:
-            initialize_services()
-        
-        # Get robot status
-        status_data = {
-            "connected": robot_service.status["connected"] if robot_service else False,
-            "mock_mode": not (robot_service and robot_service.status.get("connected")),
-            "service_available": robot_service is not None,
-            "stream_service": stream_service is not None
-        }
-        
-        # Add hardware status if connected
-        if robot_service and robot_service.status.get("connected", False):
-            try:
-                status_data.update({
-                    "hardware_status": "healthy",
-                    "leader_connected": True,
-                    "follower_connected": True,
-                    "cameras_active": False  # Update based on actual status
-                })
-            except Exception as e:
-                logger.warning(f"Could not get hardware status: {e}")
-                status_data["hardware_status"] = "unknown"
-        
-        return ApiResponse(
-            status="success",
-            message="Robot status retrieved",
-            data=status_data
-        )
-        
-    except Exception as e:
-        logger.error(f"Failed to get robot status: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get robot status: {str(e)}"
-        )
+    """Return the current robot connection status."""
+
+    return ApiResponse(
+        status="success",
+        message="Robot status retrieved",
+        data=_build_status(),
+    )
+
 
 @router.get("/info", response_model=ApiResponse)
 async def get_robot_info():
-    """
-    Get detailed robot information and capabilities
-    
-    Returns:
-    - Robot model and configuration
-    - Available features
-    - Supported operations
-    """
-    try:
-        info_data = {
-            "robot_type": "ALOHA",
-            "mock_mode": True,
-            "features": [
-                "teleoperation",
-                "recording", 
-                "emergency_stop",
-                "configuration_presets",
-                "performance_monitoring"
-            ],
-            "supported_modes": [
-                "bimanual",
-                "leader_only"
-            ],
-            "preset_configurations": [
-                "safe",
-                "normal", 
-                "performance"
-            ]
-        }
-        
-        return ApiResponse(
-            status="success",
-            message="Robot information retrieved",
-            data=info_data
-        )
-        
-    except Exception as e:
-        logger.error(f"Failed to get robot info: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get robot info: {str(e)}"
-        )
+    """Expose high-level robot capabilities to the GUI."""
+
+    info = {
+        "robot_type": _robot_state.get("robot_type") or "aloha",
+        "mock_mode": _robot_state.get("mock_mode", True),
+        "supported_modes": ["bimanual", "left", "right"],
+        "active_mode": _robot_state.get("mode"),
+        "profile": _robot_state.get("profile"),
+        "available_arms": _robot_state.get("available_arms"),
+        "features": [
+            "teleoperation",
+            "recording",
+            "emergency_stop",
+            "configuration_presets",
+            "performance_monitoring",
+        ],
+    }
+    return ApiResponse(
+        status="success",
+        message="Robot information retrieved",
+        data=info,
+    )
+
 
 @router.get("/configs", response_model=ApiResponse)
 async def get_robot_configs():
-    """Return available robot configuration presets (placeholder)."""
-    try:
-        data = {
-            "presets": [
-                {"name": "safe", "description": "Lowest motion limits, high safety margins"},
-                {"name": "normal", "description": "Balanced defaults for development"},
-                {"name": "performance", "description": "Higher speed & range (use caution)"}
-            ],
-            "supports_overrides": True,
-            "available_arms": robot_service.status["available_arms"] if robot_service else []
-        }
-        return ApiResponse(status="success", message="Robot configs retrieved", data=data)
-    except Exception as e:
-        logger.error(f"Failed to get robot configs: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get robot configs: {e}")
+    """Return supported presets and the currently connected hardware summary."""
+
+    data = {
+        "presets": [
+            {"name": "bimanual", "description": "Dual-arm ALOHA configuration"},
+            {"name": "left", "description": "Single left arm (leader/follower)"},
+            {"name": "right", "description": "Single right arm (leader/follower)"},
+        ],
+        "active_profile": _robot_state.get("profile"),
+        "available_arms": _robot_state.get("available_arms"),
+        "mode": _robot_state.get("mode"),
+        "mock_mode": _robot_state.get("mock_mode"),
+    }
+    return ApiResponse(
+        status="success",
+        message="Robot configs retrieved",
+        data=data,
+    )

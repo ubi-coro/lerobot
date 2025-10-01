@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 try:
     from lerobot.robots.bi_viperx.config_bi_viperx import BiViperXConfig
     from lerobot.robots.utils import make_robot_from_config
+    from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 except Exception as e:  # pragma: no cover - dependency/import environment issues
     BiViperXConfig = None  # type: ignore
     make_robot_from_config = None  # type: ignore
+    RealSenseCameraConfig = None  # type: ignore
     logger.warning(f"Robot dependencies not available: {e}")
 
 
@@ -76,10 +78,23 @@ class RobotService:
                 # Load hardware config
                 hardware_config = load_hardware_config()
 
+                # Convert camera dicts to RealSenseCameraConfig objects
+                cameras_config = {}
+                if RealSenseCameraConfig is not None:
+                    for cam_name, cam_dict in hardware_config.get("cameras", {}).items():
+                        # Map hardware config keys to RealSenseCameraConfig expected keys
+                        config_dict = {
+                            "serial_number_or_name": cam_dict.get("serial", cam_dict.get("serial_number_or_name")),
+                            "fps": cam_dict.get("fps", 30),
+                            "width": cam_dict.get("width", 640),
+                            "height": cam_dict.get("height", 480),
+                        }
+                        cameras_config[cam_name] = RealSenseCameraConfig(**config_dict)
+
                 self.robot_cfg = BiViperXConfig(
                     left_arm_port=hardware_config["ports"]["follower_left"],
                     right_arm_port=hardware_config["ports"]["follower_right"],
-                    cameras=hardware_config.get("cameras", {}),
+                    cameras=cameras_config,
                 )
 
                 # Apply simple overrides (only supports key=value or ~dict.key removal like legacy)
