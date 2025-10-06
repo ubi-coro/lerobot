@@ -26,17 +26,24 @@ from pathlib import Path
 from enum import Enum
 
 # ALOHA-specific imports from LeRobot
+from lerobot.processor import make_default_processors
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging
 # Optional visualization dependency (rerun). Provide no-op fallbacks if unavailable.
 try:  # pragma: no cover - optional dependency guard
     import rerun as rr  # type: ignore
-    from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+    from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+
+    def _init_rerun(*args, **kwargs):
+        return init_rerun(*args, **kwargs)
+
     _RERUN_AVAILABLE = True
 except Exception:
     _RERUN_AVAILABLE = False
+
     def _init_rerun(*args, **kwargs):
         return None
+
     def log_rerun_data(*args, **kwargs):
         return None
 import shared
@@ -84,7 +91,7 @@ class ApiResponse(BaseModel):
 class AlohaConfig(BaseModel):
     """ALOHA-specific teleoperation configuration"""
     robot_type: str = Field(default="aloha", description="Robot type (currently only 'aloha' supported)")
-    fps: int = Field(default=30, ge=1, le=120, description="Frames per second")
+    fps: int = Field(default=90, ge=1, le=120, description="Target control loop frames per second")
     max_relative_target: Optional[float] = Field(default=25, ge=0, le=100, description="Maximum relative target (degrees)")
     moving_time: float = Field(default=0.1, ge=0.01, le=1.0, description="Moving time for velocity profiles")
     operation_mode: OperationMode = Field(default=OperationMode.BIMANUAL, description="Operation mode")
@@ -117,6 +124,17 @@ aloha_state = {
         "last_joint_update": 0.0
     }
 }
+
+def _is_dataset_recording_active() -> bool:
+    """Best-effort check whether the dataset recording worker is currently active."""
+    try:  # Lazy import to avoid circular dependency at module load
+        from . import recording_worker  # type: ignore
+
+        worker = getattr(recording_worker, "recording_worker", None)
+        return bool(getattr(worker, "active", False))
+    except Exception:
+        return False
+
 
 def create_aloha_configs(config: AlohaConfig):
     """
@@ -242,6 +260,25 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
             aloha_state["owned_robot"] = True
             logger.info("Robot and teleoperator created and connected using new factories")
 
+        # Prepare processing pipelines similar to CLI teleoperate script
+        try:
+            (
+                teleop_action_processor,
+                robot_action_processor,
+                robot_observation_processor,
+            ) = make_default_processors()
+        except Exception:  # pragma: no cover - fallback when processors unavailable
+            logger.warning("Default processor pipelines unavailable; using identity fallbacks")
+
+            def teleop_action_processor(payload):  # type: ignore
+                return payload[0]
+
+            def robot_action_processor(payload):  # type: ignore
+                return payload[0]
+
+            def robot_observation_processor(observation):  # type: ignore
+                return observation
+
         # 2. Prepare for teleoperation loop
         # Initialize rerun if display_data is enabled
         if config.display_data and _RERUN_AVAILABLE:
@@ -261,29 +298,83 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
         # 3. Simple teleoperation loop (similar to teleoperate.py)
         aloha_state["stage"] = "running"
         logger.info(f"Starting teleoperation loop (fps={config.fps}, display_data={config.display_data})")
-        loop_count = 0
-        
+        latest_observation: Dict[str, Any] = {"robot": None}
+        observation_lock = threading.Lock()
+        observation_thread = None
+
+        def _async_observation_worker():
+            """Fetch observations in the background to avoid blocking the control loop."""
+            logger.debug("Async observation worker started")
+            while not aloha_state["stop_event"].is_set():
+                try:
+                    obs = robot.get_observation()
+                    with observation_lock:
+                        latest_observation["robot"] = obs
+                except Exception:
+                    time.sleep(0.05)
+                else:
+                    # Aim for slightly higher sampling than control loop to keep frames fresh
+                    time.sleep(max(0.0, (1 / max(config.fps, 1)) / 1.5))
+            logger.debug("Async observation worker exiting")
+
+        try:
+            observation_thread = threading.Thread(target=_async_observation_worker, daemon=True)
+            observation_thread.start()
+        except Exception:
+            observation_thread = None
+
         while not aloha_state["stop_event"].is_set():
             loop_start = time.perf_counter()
             
-            # Get action from teleoperator
-            action = teleop.get_action()
-            
-            # Get observation if displaying data
-            if config.display_data:
-                observation = robot.get_observation()
-                log_rerun_data(observation, action)
-            
-            # Send action to robot
-            robot.send_action(action)
+            # Decide how to fetch observation based on recording state
+            observation = None
+            if _is_dataset_recording_active():
+                try:
+                    observation = robot.get_observation()
+                    with observation_lock:
+                        latest_observation["robot"] = observation
+                except Exception as exc:
+                    logger.debug("Synchronous observation fetch failed during recording: %s", exc)
+            else:
+                with observation_lock:
+                    observation = latest_observation.get("robot")
+                if observation is None:
+                    try:
+                        observation = robot.get_observation()
+                        with observation_lock:
+                            latest_observation["robot"] = observation
+                    except Exception as exc:
+                        logger.debug("Initial observation fetch failed: %s", exc)
+                        time.sleep(0.01)
+                        continue
+
+            if observation is None:
+                busy_wait(0.005)
+                continue
+
+            # Get raw action from teleoperator
+            teleop_raw_action = teleop.get_action()
+
+            # Run through default processing pipelines to mirror CLI behaviour
+            processed_teleop_action = teleop_action_processor((teleop_raw_action, observation))
+            robot_action_to_send = robot_action_processor((processed_teleop_action, observation))
+
+            # Send processed action to robot
+            robot.send_action(robot_action_to_send)
+
+            # Log data to rerun viewer when enabled
+            if config.display_data and _RERUN_AVAILABLE:
+                try:
+                    obs_for_display = robot_observation_processor(observation)
+                except Exception:  # pragma: no cover - visualization fallback
+                    obs_for_display = observation
+                log_rerun_data(obs_for_display, processed_teleop_action)
             
             # Control timing
             dt_s = time.perf_counter() - loop_start
             busy_wait(1 / config.fps - dt_s)
             
             loop_s = time.perf_counter() - loop_start
-            loop_count += 1
-            
             # Update performance metrics
             try:
                 pm = aloha_state.get("performance_metrics", {})
@@ -329,6 +420,12 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
             except Exception as e:
                 logger.warning(f"Error disconnecting owned teleoperator: {e}")
             logger.info("Leaving shared robot connected (owned by RobotService)")
+        if observation_thread and observation_thread.is_alive():
+            try:
+                aloha_state["stop_event"].set()
+                observation_thread.join(timeout=1.0)
+            except Exception:
+                pass
         if aloha_state.get("owned_robot"):
             aloha_state["robot"] = None
             aloha_state["teleop"] = None
