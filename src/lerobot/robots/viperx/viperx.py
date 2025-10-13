@@ -13,9 +13,13 @@
 # limitations under the License.
 
 import logging
+import threading
 import time
+from collections import deque
 from functools import cached_property
 from typing import Any
+
+import matplotlib.pyplot as plt
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -31,6 +35,79 @@ from ..utils import ensure_safe_goal_position
 from .config_viperx import ViperXConfig
 
 logger = logging.getLogger(__name__)
+
+
+class PlottingThread(threading.Thread):
+    def __init__(self, data_queues):
+        super().__init__(daemon=True)
+        self.data_queues = data_queues
+        self.stop_event = threading.Event()
+
+        # Initialize plots
+        self.fig, self.axs = plt.subplots(4, 1, figsize=(10, 12), sharex=True)
+        self.fig.suptitle("ViperX Shoulder Joint Debugging")
+
+        self.lines = {}
+        plot_configs = [
+            ("Shoulder (ID 2) Position", "Ticks", ["Goal Pos", "Current Pos"]),
+            ("Shoulder Shadow (ID 3) Position", "Ticks", ["Goal Pos", "Current Pos"]),
+            ("Shoulder (ID 2) Current", "mA", ["Current"]),
+            ("Shoulder Shadow (ID 3) Current", "mA", ["Current"]),
+        ]
+
+        for i, (title, ylabel, labels) in enumerate(plot_configs):
+            self.axs[i].set_title(title)
+            self.axs[i].set_ylabel(ylabel)
+            self.axs[i].grid(True)
+            self.lines[i] = {}
+            for label in labels:
+                (line,) = self.axs[i].plot([], [], label=label)
+                self.lines[i][label] = line
+            self.axs[i].legend()
+
+        self.axs[-1].set_xlabel("Time (s)")
+        self.fig.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.ion()
+        plt.show()
+
+    def run(self):
+        while not self.stop_event.is_set():
+            try:
+                self.update_plot()
+                plt.pause(0.05)
+            except Exception:
+                # Handle case where plot window is closed
+                break
+
+    def update_plot(self):
+        timestamps = list(self.data_queues["timestamps"])
+        if not timestamps:
+            return
+
+        # Plot 1: Shoulder Position
+        self.lines[0]["Goal Pos"].set_data(timestamps, list(self.data_queues["shoulder_goal_pos"]))
+        self.lines[0]["Current Pos"].set_data(timestamps, list(self.data_queues["shoulder_current_pos"]))
+
+        # Plot 2: Shoulder Shadow Position
+        self.lines[1]["Goal Pos"].set_data(timestamps, list(self.data_queues["shoulder_shadow_goal_pos"]))
+        self.lines[1]["Current Pos"].set_data(timestamps, list(self.data_queues["shoulder_shadow_current_pos"]))
+
+        # Plot 3: Shoulder Current
+        self.lines[2]["Current"].set_data(timestamps, list(self.data_queues["shoulder_current"]))
+
+        # Plot 4: Shoulder Shadow Current
+        self.lines[3]["Current"].set_data(timestamps, list(self.data_queues["shoulder_shadow_current"]))
+
+        for ax in self.axs:
+            ax.relim()
+            ax.autoscale_view()
+
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+    def stop(self):
+        self.stop_event.set()
+        plt.close(self.fig)
 
 
 class ViperX(Robot):
@@ -70,7 +147,10 @@ class ViperX(Robot):
             "elbow": "elbow_shadow",
         }
 
-        self._last_goal_pos = {}
+        # Plotting/debugging helpers (initialised lazily on connect).
+        self._plotting_thread: PlottingThread | None = None
+        self._data_queues: dict[str, deque] | None = None
+        self._start_time: float | None = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -111,6 +191,21 @@ class ViperX(Robot):
 
         # Set up the shadow joints.
         self.configure()
+
+        if self.config.show_debugging_graphs:
+            # Reset plotting buffers for each new connection.
+            self._data_queues = {
+                "timestamps": deque(maxlen=200),
+                "shoulder_goal_pos": deque(maxlen=200),
+                "shoulder_current_pos": deque(maxlen=200),
+                "shoulder_shadow_goal_pos": deque(maxlen=200),
+                "shoulder_shadow_current_pos": deque(maxlen=200),
+                "shoulder_current": deque(maxlen=200),
+                "shoulder_shadow_current": deque(maxlen=200),
+            }
+            self._plotting_thread = PlottingThread(self._data_queues)
+            self._plotting_thread.start()
+            self._start_time = time.time()
 
         logger.info(f"{self} connected.")
 
@@ -274,6 +369,21 @@ class ViperX(Robot):
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
+        if self.config.show_debugging_graphs and self._data_queues is not None:
+            shoulder_pos = motor_pos.get("shoulder")
+            shoulder_shadow_pos = motor_pos.get("shoulder_shadow")
+            if shoulder_pos is not None and shoulder_shadow_pos is not None:
+                self._data_queues["shoulder_current_pos"].append(shoulder_pos)
+                self._data_queues["shoulder_shadow_current_pos"].append(shoulder_shadow_pos)
+
+            motor_currents = self.bus.sync_read("Present_Current", normalize=False)
+            shoulder_current = motor_currents.get("shoulder")
+            shoulder_shadow_current = motor_currents.get("shoulder_shadow")
+            if shoulder_current is not None:
+                self._data_queues["shoulder_current"].append(shoulder_current)
+            if shoulder_shadow_current is not None:
+                self._data_queues["shoulder_shadow_current"].append(shoulder_shadow_current)
+
         return obs_dict
 
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
@@ -326,46 +436,35 @@ class ViperX(Robot):
                     if shadow in goal_pos:
                         goal_pos[shadow] = safe_value
 
+        if (
+            self.config.show_debugging_graphs
+            and self._data_queues is not None
+            and self._start_time is not None
+        ):
+            shoulder_goal = goal_pos.get("shoulder")
+            shadow_goal = goal_pos.get("shoulder_shadow")
+            if shoulder_goal is not None and shadow_goal is not None:
+                elapsed = time.time() - self._start_time
+                self._data_queues["timestamps"].append(elapsed)
+                self._data_queues["shoulder_goal_pos"].append(shoulder_goal)
+                self._data_queues["shoulder_shadow_goal_pos"].append(shadow_goal)
+
         if goal_pos:
             self.bus.sync_write("Goal_Position", goal_pos)
-            self._last_goal_pos = goal_pos.copy()
 
         # Return original action for compatibility with downstream logging.
         return action
 
-    def get_shadow_debug_status(self) -> dict[str, dict[str, float | int | None]]:
-        """Return current vs goal metrics for shadowed joints."""
-
-        if not self.is_connected or not self._last_goal_pos:
-            return {}
-
-        motor_pos = self.bus.sync_read("Present_Position")
-        motor_currents = self.bus.sync_read("Present_Current", normalize=False)
-
-        status: dict[str, dict[str, float | int | None]] = {}
-        for primary, shadow in self.shadow_pairs.items():
-            goal = self._last_goal_pos.get(primary)
-            if goal is None:
-                continue
-
-            primary_pos = motor_pos.get(primary)
-            shadow_pos = motor_pos.get(shadow)
-
-            status[primary] = {
-                "goal": goal,
-                "primary_pos": primary_pos,
-                "shadow_pos": shadow_pos,
-                "primary_err": None if primary_pos is None else goal - primary_pos,
-                "shadow_err": None if shadow_pos is None else goal - shadow_pos,
-                "primary_current": motor_currents.get(primary),
-                "shadow_current": motor_currents.get(shadow),
-            }
-
-        return status
-
     def disconnect(self):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.config.show_debugging_graphs and self._plotting_thread is not None:
+            self._plotting_thread.stop()
+            self._plotting_thread.join()
+            self._plotting_thread = None
+            self._data_queues = None
+            self._start_time = None
 
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
