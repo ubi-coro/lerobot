@@ -49,6 +49,7 @@ class BiViperX(Robot):
             disable_torque_on_disconnect=config.left_arm_disable_torque_on_disconnect,
             max_relative_target=config.left_arm_max_relative_target,
             use_degrees=config.left_arm_use_degrees,
+            show_debugging_graphs=config.show_debugging_graphs,
             cameras={},
         )
 
@@ -59,12 +60,14 @@ class BiViperX(Robot):
             disable_torque_on_disconnect=config.right_arm_disable_torque_on_disconnect,
             max_relative_target=config.right_arm_max_relative_target,
             use_degrees=config.right_arm_use_degrees,
+            show_debugging_graphs=config.show_debugging_graphs,
             cameras={},
         )
 
         self.left_arm = ViperX(left_arm_config)
         self.right_arm = ViperX(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
+        self._shadow_debug_enabled = bool(config.show_debugging_graphs)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -161,3 +164,18 @@ class BiViperX(Robot):
 
         for cam in self.cameras.values():
             cam.disconnect()
+
+    def get_shadow_debug_status(self) -> dict[str, dict[str, float | int | None]]:
+        if not self._shadow_debug_enabled:
+            return {}
+
+        status = {}
+        left_status = self.left_arm.get_shadow_debug_status()
+        right_status = self.right_arm.get_shadow_debug_status()
+
+        for joint, values in left_status.items():
+            status[f"left_{joint}"] = values
+        for joint, values in right_status.items():
+            status[f"right_{joint}"] = values
+
+        return status

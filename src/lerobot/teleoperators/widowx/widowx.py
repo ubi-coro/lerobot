@@ -147,8 +147,12 @@ class WidowX(Teleoperator):
         # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
         # As a result, if only one of them is required to move to a certain position,
         # the other will follow. This is to avoid breaking the motors.
-        self.bus.write("Secondary_ID", "shoulder_shadow", 2)
-        self.bus.write("Secondary_ID", "elbow_shadow", 4)
+        # Do not configure Secondary_ID on the leader; shadows are synchronized in software downstream.
+        try:
+            self.bus.write("Secondary_ID", "shoulder_shadow", 0)
+            self.bus.write("Secondary_ID", "elbow_shadow", 0)
+        except Exception:
+            pass
 
     def get_action(self) -> dict[str, float]:
         if not self.is_connected:

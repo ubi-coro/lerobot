@@ -55,6 +55,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
+from typing import Any
 
 import rerun as rr
 
@@ -137,6 +138,8 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    debug_enabled = bool(getattr(getattr(robot, "config", None), "show_debugging_graphs", False))
+    debug_status_fn = getattr(robot, "get_shadow_debug_status", None)
 
     while True:
         loop_start = time.perf_counter()
@@ -146,6 +149,35 @@ def teleop_loop(
         # teleop_action_processor can take None as an observation
         # given that it is the identity processor as default
         obs = robot.get_observation()
+
+        debug_lines: list[str] = []
+        if debug_enabled and callable(debug_status_fn):
+            shadow_status = debug_status_fn()
+            if shadow_status:
+                debug_lines.append("shadow Δ(goal-pos) | currents [mA]")
+
+                def _fmt_float(value: Any, precision: int = 2) -> str:
+                    if value is None:
+                        return "n/a"
+                    return f"{float(value):.{precision}f}"
+
+                def _fmt_current(value: Any) -> str:
+                    if value is None:
+                        return "n/a"
+                    return f"{int(value):d}"
+
+                for joint, info in shadow_status.items():
+                    debug_lines.append(
+                        (
+                            f"{joint:<8} goal={_fmt_float(info.get('goal'))}"
+                            f" | prim={_fmt_float(info.get('primary_pos'))}"
+                            f" Δ={_fmt_float(info.get('primary_err'))}"
+                            f" | shad={_fmt_float(info.get('shadow_pos'))}"
+                            f" Δ={_fmt_float(info.get('shadow_err'))}"
+                            f" | I={_fmt_current(info.get('primary_current'))}/"
+                            f"{_fmt_current(info.get('shadow_current'))}"
+                        )
+                    )
 
         # Get teleop action
         raw_action = teleop.get_action()
@@ -178,7 +210,8 @@ def teleop_loop(
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
         loop_s = time.perf_counter() - loop_start
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        output_lines = debug_lines + [f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)"]
+        print("\n" + "\n".join(output_lines))
 
         if duration is not None and time.perf_counter() - start >= duration:
             return

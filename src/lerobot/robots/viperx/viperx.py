@@ -24,7 +24,6 @@ from lerobot.motors.dynamixel import (
     OperatingMode,
     DriveMode,
 )
-from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -65,6 +64,14 @@ class ViperX(Robot):
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
+        # Primary → shadow motor name mapping for the dual joints.
+        self.shadow_pairs = {
+            "shoulder": "shoulder_shadow",
+            "elbow": "elbow_shadow",
+        }
+
+        self._last_goal_pos = {}
+
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.bus.motors}
@@ -102,7 +109,9 @@ class ViperX(Robot):
         for cam in self.cameras.values():
             cam.connect()
 
+        # Set up the shadow joints.
         self.configure()
+
         logger.info(f"{self} connected.")
 
     @property
@@ -178,11 +187,24 @@ class ViperX(Robot):
         with self.bus.torque_disabled():
             self.bus.configure_motors()
 
-            # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
-            # As a result, if only one of them is required to move to a certain position,
-            # the other will follow. This is to avoid breaking the motors.
-            self.bus.write("Secondary_ID", "shoulder_shadow", 2)
-            self.bus.write("Secondary_ID", "elbow_shadow", 4)
+            # IMPORTANT: Explicitly disable any persisted firmware shadow linkage to avoid
+            # Dual Joint Mode. We synchronize shadow joints in software via SyncWrite.
+            try:
+                self.bus.write("Secondary_ID", "shoulder_shadow", 0)
+                self.bus.write("Secondary_ID", "elbow_shadow", 0)
+                # Read-back to verify
+                try:
+                    sid_shoulder = self.bus.read("Secondary_ID", "shoulder_shadow")
+                    sid_elbow = self.bus.read("Secondary_ID", "elbow_shadow")
+                    logger.info(
+                        "Secondary_ID cleared: shoulder_shadow=%s, elbow_shadow=%s",
+                        sid_shoulder.get("shoulder_shadow", sid_shoulder),
+                        sid_elbow.get("elbow_shadow", sid_elbow),
+                    )
+                except Exception:
+                    logger.debug("Secondary_ID read-back failed (non-fatal)", exc_info=True)
+            except Exception:
+                logger.debug("Failed to clear Secondary_ID on shadow joints (non-fatal)", exc_info=True)
 
             # Set a velocity limit of 131 as advised by Trossen Robotics
             # TODO(aliberts): remove as it's actually useless in position control
@@ -201,8 +223,27 @@ class ViperX(Robot):
             # complete grasp (both gripper fingers are ordered to join and reach a touch).
             self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
 
-            # We intentionally DO NOT overwrite Drive_Mode here; calibration already stored all zeros
-            # for follower. Leaving this untouched ensures hardware-level alignment with leader.
+            # Enforce drive modes for primary/shadow pairs to guarantee consistent directionality.
+            # Primary shoulder/elbow are inverted to match world-frame mapping from WidowX.
+            # Shadows are non-inverted so that mirrored mounting produces same physical motion.
+            try:
+                self.bus.write("Drive_Mode", "shoulder", DriveMode.INVERTED.value)
+                self.bus.write("Drive_Mode", "elbow", DriveMode.INVERTED.value)
+                self.bus.write("Drive_Mode", "shoulder_shadow", DriveMode.NON_INVERTED.value)
+                self.bus.write("Drive_Mode", "elbow_shadow", DriveMode.NON_INVERTED.value)
+                # Read-back to log final state
+                try:
+                    dm = self.bus.read("Drive_Mode", [
+                        "shoulder",
+                        "elbow",
+                        "shoulder_shadow",
+                        "elbow_shadow",
+                    ])
+                    logger.info("Drive_Mode set: %s", dm)
+                except Exception:
+                    logger.debug("Drive_Mode read-back failed (non-fatal)", exc_info=True)
+            except Exception:
+                logger.debug("Failed to enforce Drive_Mode on primary/shadow pairs", exc_info=True)
 
     def get_observation(self) -> dict[str, Any]:
         """The returned observations do not have a batch dimension."""
@@ -236,29 +277,16 @@ class ViperX(Robot):
         return obs_dict
 
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
-        """Command arm to move to a target joint configuration.
-
-        The relative action magnitude may be clipped depending on the configuration parameter
-        `max_relative_target`. In this case, the action sent differs from original action.
-        Thus, this function always returns the action actually sent.
-
-        Args:
-            action (dict[str, float]): The goal positions for the motors.
-
-        Returns:
-            dict[str, float]: The action sent to the motors, potentially clipped.
-        """
+        """Command the arm to move to a target joint configuration."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # No software mirroring: physical drive_mode differences between leader & follower
-        # already achieve consistent Cartesian motion.
-
-        # Only command primary joints; shadow motors follow via Secondary_ID.
         allowed_motors = {
             "waist",
             "shoulder",
+            "shoulder_shadow",
             "elbow",
+            "elbow_shadow",
             "forearm_roll",
             "wrist_angle",
             "wrist_rotate",
@@ -270,18 +298,70 @@ class ViperX(Robot):
             if key.endswith(".pos") and key.removesuffix(".pos") in allowed_motors
         }
 
-        # Cap goal position when too far away from present position.
-        # /!\ Slower fps expected due to reading from the follower.
-        if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position")
-            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-            goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+        # Software mirroring: ensure each shadow receives the same command as its primary.
+        for primary, shadow in self.shadow_pairs.items():
+            if primary in goal_pos and shadow not in goal_pos:
+                goal_pos[shadow] = goal_pos[primary]
 
-        # Send goal position to the arm
-        self.bus.sync_write("Goal_Position", goal_pos)
-        # Return the full original action (including shadows) for dataset compatibility.
-        # Shadows are recorded as commanded, even though not sent (they follow via Secondary_ID).
+        # Cap goal position when too far away from present position (safety check).
+        if self.config.max_relative_target is not None and goal_pos:
+            present_pos = self.bus.sync_read("Present_Position")
+
+            # Avoid double-clamping shadow motors when their primaries are present.
+            shadow_to_primary = {shadow: primary for primary, shadow in self.shadow_pairs.items()}
+            goal_present_pos = {}
+            for name, target in goal_pos.items():
+                primary = shadow_to_primary.get(name)
+                if primary is not None and primary in goal_pos:
+                    # Shadow motor with matching primary: clamp the primary only, then mirror.
+                    continue
+                if name in present_pos:
+                    goal_present_pos[name] = (target, present_pos[name])
+
+            if goal_present_pos:
+                safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+                for name, safe_value in safe_goal_pos.items():
+                    goal_pos[name] = safe_value
+                    shadow = self.shadow_pairs.get(name)
+                    if shadow in goal_pos:
+                        goal_pos[shadow] = safe_value
+
+        if goal_pos:
+            self.bus.sync_write("Goal_Position", goal_pos)
+            self._last_goal_pos = goal_pos.copy()
+
+        # Return original action for compatibility with downstream logging.
         return action
+
+    def get_shadow_debug_status(self) -> dict[str, dict[str, float | int | None]]:
+        """Return current vs goal metrics for shadowed joints."""
+
+        if not self.is_connected or not self._last_goal_pos:
+            return {}
+
+        motor_pos = self.bus.sync_read("Present_Position")
+        motor_currents = self.bus.sync_read("Present_Current", normalize=False)
+
+        status: dict[str, dict[str, float | int | None]] = {}
+        for primary, shadow in self.shadow_pairs.items():
+            goal = self._last_goal_pos.get(primary)
+            if goal is None:
+                continue
+
+            primary_pos = motor_pos.get(primary)
+            shadow_pos = motor_pos.get(shadow)
+
+            status[primary] = {
+                "goal": goal,
+                "primary_pos": primary_pos,
+                "shadow_pos": shadow_pos,
+                "primary_err": None if primary_pos is None else goal - primary_pos,
+                "shadow_err": None if shadow_pos is None else goal - shadow_pos,
+                "primary_current": motor_currents.get(primary),
+                "shadow_current": motor_currents.get(shadow),
+            }
+
+        return status
 
     def disconnect(self):
         if not self.is_connected:

@@ -40,6 +40,8 @@ class ViperXConfig(RobotConfig):
 
     use_degrees: bool = False
 
+    show_debugging_graphs: bool = True
+
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Troubleshooting: If one of your IntelRealSense cameras freeze during
