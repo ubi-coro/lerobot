@@ -74,6 +74,21 @@ def load_hardware_config():
     with open(config_path, 'r') as f:
         return json.load(f)
 
+def _ensure_calibration_applied(device, device_name: str):
+    """Check if device (robot or teleoperator) has calibration applied.
+    
+    Args:
+        device: Robot or teleoperator instance
+        device_name: Human-readable name for logging
+    """
+    if hasattr(device, 'is_calibrated'):
+        if not device.is_calibrated:
+            logger.warning(f"{device_name} is not calibrated. Teleoperation may not work correctly.")
+        else:
+            logger.info(f"{device_name} calibration verified.")
+    else:
+        logger.debug(f"{device_name} does not have calibration checking.")
+
 # Create router
 router = APIRouter(prefix="/api/aloha-teleoperation", tags=["aloha-teleoperation"])
 
@@ -124,6 +139,7 @@ aloha_state = {
         "last_joint_update": 0.0
     }
 }
+
 
 def _is_dataset_recording_active() -> bool:
     """Best-effort check whether the dataset recording worker is currently active."""
@@ -228,19 +244,25 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
     Worker thread for ALOHA teleoperation.
     This function now uses new LeRobot factories for robot and teleoperator.
     """
+    # Initialize variables at function scope to avoid UnboundLocalError in finally block
+    robot = None
+    teleop = None
+    
     try:
         # Lazy imports here too
         from lerobot.robots.utils import make_robot_from_config
         from lerobot.teleoperators.utils import make_teleoperator_from_config
-        robot = None
-        teleop = None
         if reuse_existing and aloha_state["robot"] is not None:
             robot = aloha_state["robot"]
             logger.info("Reusing already connected robot instance for teleoperation (no reconnection)")
             # Still create the teleoperator and connect it
             _, teleop_config = create_aloha_configs(config)
             teleop = make_teleoperator_from_config(teleop_config)
-            teleop.connect(calibrate=False)
+            # Connect with calibration if file exists (no interactive prompt needed)
+            # This writes calibration to motors, which is critical for correct operation
+            teleop.connect(calibrate=True)
+            _ensure_calibration_applied(robot, "robot (reused)")
+            _ensure_calibration_applied(teleop, "teleoperator")
             aloha_state["teleop"] = teleop
             aloha_state["owned_robot"] = False
             logger.info("Teleoperator created and connected; robot reused from RobotService")
@@ -250,10 +272,13 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
             robot = make_robot_from_config(robot_config)
             teleop = make_teleoperator_from_config(teleop_config)
             
-            # Connect them; avoid auto-calibration to prevent interactive prompts in GUI
-            # Avoid auto-calibration to prevent interactive prompts during GUI sessions
-            robot.connect(calibrate=False)
-            teleop.connect(calibrate=False)
+            # Connect with calibration if files exist (no interactive prompt needed)
+            # This writes calibration to motors, which is critical for correct operation
+            # The calibration files must exist, otherwise this will prompt for calibration
+            robot.connect(calibrate=True)
+            teleop.connect(calibrate=True)
+            _ensure_calibration_applied(robot, "robot")
+            _ensure_calibration_applied(teleop, "teleoperator")
             
             aloha_state["robot"] = robot
             aloha_state["teleop"] = teleop
@@ -298,55 +323,22 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
         # 3. Simple teleoperation loop (similar to teleoperate.py)
         aloha_state["stage"] = "running"
         logger.info(f"Starting teleoperation loop (fps={config.fps}, display_data={config.display_data})")
-        latest_observation: Dict[str, Any] = {"robot": None}
-        observation_lock = threading.Lock()
-        observation_thread = None
-
-        def _async_observation_worker():
-            """Fetch observations in the background to avoid blocking the control loop."""
-            logger.debug("Async observation worker started")
-            while not aloha_state["stop_event"].is_set():
-                try:
-                    obs = robot.get_observation()
-                    with observation_lock:
-                        latest_observation["robot"] = obs
-                except Exception:
-                    time.sleep(0.05)
-                else:
-                    # Aim for slightly higher sampling than control loop to keep frames fresh
-                    time.sleep(max(0.0, (1 / max(config.fps, 1)) / 1.5))
-            logger.debug("Async observation worker exiting")
-
-        try:
-            observation_thread = threading.Thread(target=_async_observation_worker, daemon=True)
-            observation_thread.start()
-        except Exception:
-            observation_thread = None
+        
+        # NOTE: We do NOT use async observation worker to avoid bus conflicts!
+        # The CLI script works synchronously and so should we for reliability.
+        # Multiple threads accessing the Dynamixel bus simultaneously causes
+        # "Port is in use" and "Incorrect status packet" errors.
 
         while not aloha_state["stop_event"].is_set():
             loop_start = time.perf_counter()
             
-            # Decide how to fetch observation based on recording state
-            observation = None
-            if _is_dataset_recording_active():
-                try:
-                    observation = robot.get_observation()
-                    with observation_lock:
-                        latest_observation["robot"] = observation
-                except Exception as exc:
-                    logger.debug("Synchronous observation fetch failed during recording: %s", exc)
-            else:
-                with observation_lock:
-                    observation = latest_observation.get("robot")
-                if observation is None:
-                    try:
-                        observation = robot.get_observation()
-                        with observation_lock:
-                            latest_observation["robot"] = observation
-                    except Exception as exc:
-                        logger.debug("Initial observation fetch failed: %s", exc)
-                        time.sleep(0.01)
-                        continue
+            # Always fetch observation synchronously to avoid bus conflicts
+            try:
+                observation = robot.get_observation()
+            except Exception as exc:
+                logger.debug("Observation fetch failed: %s", exc)
+                time.sleep(0.01)
+                continue
 
             if observation is None:
                 busy_wait(0.005)
@@ -420,12 +412,7 @@ def aloha_teleoperation_worker(config: AlohaConfig, reuse_existing: bool):
             except Exception as e:
                 logger.warning(f"Error disconnecting owned teleoperator: {e}")
             logger.info("Leaving shared robot connected (owned by RobotService)")
-        if observation_thread and observation_thread.is_alive():
-            try:
-                aloha_state["stop_event"].set()
-                observation_thread.join(timeout=1.0)
-            except Exception:
-                pass
+        # Note: observation_thread removed - we now use synchronous observation fetching
         if aloha_state.get("owned_robot"):
             aloha_state["robot"] = None
             aloha_state["teleop"] = None

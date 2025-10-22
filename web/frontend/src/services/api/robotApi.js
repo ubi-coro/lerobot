@@ -35,7 +35,7 @@ async function apiCall(endpoint, options = {}) {
 
     // Check if response is successful
     if (!response.ok) {
-      const errorMessage = data.message || `HTTP ${response.status}: ${response.statusText}`;
+      const errorMessage = data.detail || data.message || `HTTP ${response.status}: ${response.statusText}`;
       throw new Error(errorMessage);
     }
 

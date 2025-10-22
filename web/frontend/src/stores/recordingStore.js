@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { useRobotStore } from './robotStore';
 
 // Simple field validation helper
-function validateConfig(cfg) {
+function validateConfig(cfg, mode = 'recording') {
   const errors = {};
   if (!cfg.repo_id || !cfg.repo_id.includes('/')) errors.repo_id = 'Format: user/dataset';
   if (!cfg.single_task || cfg.single_task.trim().length < 3) errors.single_task = 'Describe the task';
@@ -10,8 +10,17 @@ function validateConfig(cfg) {
   if (!cfg.episode_time_s || cfg.episode_time_s < 1) errors.episode_time_s = '>=1s';
   if (!cfg.num_episodes || cfg.num_episodes < 1) errors.num_episodes = '>=1';
   if (!cfg.root || cfg.root.trim().length === 0) errors.root = 'Root path required';
-  // Frontend best-effort check: if root exists & not resume, warn user. We cannot access filesystem directly in browser,
-  // but if the user previously started a dataset in this session (tracked in localStorage), we can infer existence.
+  
+  // Replay-specific validation
+  if (mode === 'replay') {
+    if (!cfg.policyPath || cfg.policyPath.trim().length === 0) {
+      errors.policyPath = 'Policy path required for evaluation';
+    } else if (!cfg.policyPath.endsWith('pretrained_model')) {
+      errors.policyPath = 'Policy path should end with pretrained_model';
+    }
+  }
+  
+  // Frontend best-effort check: if root exists & not resume, warn user
   try {
     if (cfg.root && !cfg.resume) {
       const existingDatasets = JSON.parse(localStorage.getItem('lerobot.recording.created_roots') || '[]');
@@ -38,8 +47,10 @@ export const useRecordingStore = defineStore('recording', {
       private: false,
       resume: false,
   root: '',
-  display_data: false
+  display_data: false,
+  policyPath: ''
     },
+    mode: 'recording',
     status: {
       active: false,
       episode_index: 0,
@@ -121,21 +132,25 @@ export const useRecordingStore = defineStore('recording', {
   },
   actions: {
     _initPersistence() {
-      // load saved root if present and none set
       const savedRoot = localStorage.getItem('lerobot.recording.root');
       const savedRepo = localStorage.getItem('lerobot.recording.repo_id');
       const savedTask = localStorage.getItem('lerobot.recording.single_task');
+      const savedPolicyPath = localStorage.getItem('lerobot.recording.policy_path');
       if (savedRoot && !this.config.root) {
         this.config.root = savedRoot;
-        this.validationErrors = validateConfig(this.config);
+        this.validationErrors = validateConfig(this.config, this.mode);
       }
       if (savedRepo && !this.config.repo_id) {
         this.config.repo_id = savedRepo;
-        this.validationErrors = validateConfig(this.config);
+        this.validationErrors = validateConfig(this.config, this.mode);
       }
       if (savedTask && !this.config.single_task) {
         this.config.single_task = savedTask;
-        this.validationErrors = validateConfig(this.config);
+        this.validationErrors = validateConfig(this.config, this.mode);
+      }
+      if (savedPolicyPath && !this.config.policyPath) {
+        this.config.policyPath = savedPolicyPath;
+        this.validationErrors = validateConfig(this.config, this.mode);
       }
     },
     ensureSocketListeners() {
@@ -151,11 +166,11 @@ export const useRecordingStore = defineStore('recording', {
         this.lastUpdate = Date.now();
       });
       sock.on('recording_error', (payload) => {
-  this.error = payload?.error || 'Unknown recording error';
-  this.starting = false;
-  // Reset status on error to allow retry
-  this.status.active = false;
-  this.status.phase = 'idle';
+        this.error = payload?.error || 'Unknown recording error';
+        this.starting = false;
+        // Reset status on error to allow retry
+        this.status.active = false;
+        this.status.phase = 'idle';
       });
       sock.on('recording_started', () => {
         this.starting = false;
@@ -169,7 +184,7 @@ export const useRecordingStore = defineStore('recording', {
       if (!this.config.push_to_hub && this.config.private) {
         this.config.private = false;
       }
-      this.validationErrors = validateConfig(this.config);
+      this.validationErrors = validateConfig(this.config, this.mode);
       if (typeof partial.root !== 'undefined') {
         try { localStorage.setItem('lerobot.recording.root', this.config.root || ''); } catch (_) { /* ignore */ }
       }
@@ -179,9 +194,20 @@ export const useRecordingStore = defineStore('recording', {
       if (typeof partial.single_task !== 'undefined') {
         try { localStorage.setItem('lerobot.recording.single_task', this.config.single_task || ''); } catch (_) { /* ignore */ }
       }
+      if (typeof partial.policyPath !== 'undefined') {
+        try { localStorage.setItem('lerobot.recording.policy_path', this.config.policyPath || ''); } catch (_) { /* ignore */ }
+      }
+    },
+    setMode(newMode) {
+      if (newMode !== 'recording' && newMode !== 'replay') {
+        console.error('Invalid mode:', newMode);
+        return;
+      }
+      this.mode = newMode;
+      this.validationErrors = validateConfig(this.config, this.mode);
     },
     validateAll() {
-      this.validationErrors = validateConfig(this.config);
+      this.validationErrors = validateConfig(this.config, this.mode);
       return Object.keys(this.validationErrors).length === 0;
     },
     start() {
@@ -200,9 +226,9 @@ export const useRecordingStore = defineStore('recording', {
       }
       this.starting = true;
       this.error = null;
-  const payload = { ...this.config };
-  // enforce video true implicitly
-  payload.video = true;
+      const payload = { ...this.config, mode: this.mode };
+      // enforce video true implicitly
+      payload.video = true;
       sock.emit('start_recording', payload);
       // Mark this root as used so subsequent attempts without resume will show a validation error early.
       try {

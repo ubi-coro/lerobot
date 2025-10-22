@@ -21,37 +21,47 @@ def to_lerobot_configs(robot: RobotCfg, teleop: TeleopCfg) -> tuple:
 
     # Robot-Config
     if robot.type == "bi_viperx":
+        # BiViperX uses a single calibration_dir for both arms
+        # The arms will append "_left" and "_right" to the id when loading calibration files
+        calibration_dir = None
+        if robot.left_arm and robot.left_arm.calibration_dir:
+            calibration_dir = robot.left_arm.calibration_dir
+        elif robot.right_arm and robot.right_arm.calibration_dir:
+            calibration_dir = robot.right_arm.calibration_dir
+            
         robot_config = BiViperXConfig(
             id=robot.id,
             left_arm_port=robot.left_arm.port if robot.left_arm else None,
             right_arm_port=robot.right_arm.port if robot.right_arm else None,
-            cameras=cameras
+            cameras=cameras,
+            calibration_dir=calibration_dir,
+            show_debugging_graphs=False,
         )
-        # Set calibration dirs if available
-        if robot.left_arm and robot.left_arm.calibration_dir:
-            robot_config.left_arm_calibration_dir = robot.left_arm.calibration_dir
-        if robot.right_arm and robot.right_arm.calibration_dir:
-            robot_config.right_arm_calibration_dir = robot.right_arm.calibration_dir
     else:  # viperx
         robot_config = ViperXConfig(
             id=robot.id,
             port=robot.port,
             calibration_dir=robot.calibration_dir,
-            cameras=cameras
+            cameras=cameras,
+            show_debugging_graphs=False,
         )
 
     # Teleop-Config
     if teleop.type == "bi_widowx":
+        # BiWidowX uses a single calibration_dir for both arms
+        # The arms will append "_left" and "_right" to the id when loading calibration files
+        calibration_dir = None
+        if teleop.left_arm and teleop.left_arm.calibration_dir:
+            calibration_dir = teleop.left_arm.calibration_dir
+        elif teleop.right_arm and teleop.right_arm.calibration_dir:
+            calibration_dir = teleop.right_arm.calibration_dir
+            
         teleop_config = BiWidowXConfig(
             id=teleop.id,
             left_arm_port=teleop.left_arm.port if teleop.left_arm else None,
-            right_arm_port=teleop.right_arm.port if teleop.right_arm else None
+            right_arm_port=teleop.right_arm.port if teleop.right_arm else None,
+            calibration_dir=calibration_dir,
         )
-        # Set calibration dirs if available
-        if teleop.left_arm and teleop.left_arm.calibration_dir:
-            teleop_config.left_arm_calibration_dir = teleop.left_arm.calibration_dir
-        if teleop.right_arm and teleop.right_arm.calibration_dir:
-            teleop_config.right_arm_calibration_dir = teleop.right_arm.calibration_dir
     else:  # widowx
         teleop_config = WidowXConfig(
             id=teleop.id,

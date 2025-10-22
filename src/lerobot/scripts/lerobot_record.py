@@ -290,6 +290,10 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    # --- START: FPS Debugging Code ---
+    frame_count = 0
+    last_log_time = start_episode_t
+    # --- END: FPS Debugging Code ---
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -308,6 +312,7 @@ def record_loop(
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
+            start_predict_t = time.perf_counter()
             action_values = predict_action(
                 observation=observation_frame,
                 policy=policy,
@@ -318,6 +323,13 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
+
+            predict_duration_ms = (time.perf_counter() - start_predict_t) * 1000
+
+            # Log only if it's a "slow" cycle (e.g., > 20ms, adjust if needed)
+            if predict_duration_ms > 20:
+                logging.warning(f"Policy inference (slow cycle) took: {predict_duration_ms:.2f}ms")
+            # --- END: Track slow cycle (inference) duration ---
 
             action_names = dataset.features[ACTION]["names"]
             act_processed_policy: RobotAction = {
@@ -370,6 +382,16 @@ def record_loop(
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
+
+        # --- START: FPS Debugging Code ---
+        frame_count += 1
+        current_time = time.perf_counter()
+        if current_time - last_log_time >= 2.0:  # Log every 2 seconds
+            actual_fps = frame_count / (current_time - last_log_time)
+            logging.info(f"Actual FPS: {actual_fps:.2f} (Target: {fps}) | Last loop duration: {dt_s*1000:.2f}ms")
+            frame_count = 0
+            last_log_time = current_time
+        # --- END: FPS Debugging Code ---
 
         timestamp = time.perf_counter() - start_episode_t
 

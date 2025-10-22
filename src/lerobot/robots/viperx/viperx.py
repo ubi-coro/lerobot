@@ -151,6 +151,7 @@ class ViperX(Robot):
         self._plotting_thread: PlottingThread | None = None
         self._data_queues: dict[str, deque] | None = None
         self._start_time: float | None = None
+        self._last_goal_pos: dict[str, float] = {}
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -415,26 +416,37 @@ class ViperX(Robot):
 
         # Cap goal position when too far away from present position (safety check).
         if self.config.max_relative_target is not None and goal_pos:
-            present_pos = self.bus.sync_read("Present_Position")
+            present_pos: dict[str, float] | None = None
+            try:
+                present_pos = self.bus.sync_read("Present_Position")
+            except IndexError as exc:
+                logger.warning(
+                    "%s failed to read Present_Position for safety clamp (%s). Proceeding without clamping this cycle.",
+                    self,
+                    exc,
+                )
+            except Exception:
+                logger.warning("%s failed to read Present_Position for safety clamp.", self, exc_info=True)
 
-            # Avoid double-clamping shadow motors when their primaries are present.
-            shadow_to_primary = {shadow: primary for primary, shadow in self.shadow_pairs.items()}
-            goal_present_pos = {}
-            for name, target in goal_pos.items():
-                primary = shadow_to_primary.get(name)
-                if primary is not None and primary in goal_pos:
-                    # Shadow motor with matching primary: clamp the primary only, then mirror.
-                    continue
-                if name in present_pos:
-                    goal_present_pos[name] = (target, present_pos[name])
+            if present_pos:
+                # Avoid double-clamping shadow motors when their primaries are present.
+                shadow_to_primary = {shadow: primary for primary, shadow in self.shadow_pairs.items()}
+                goal_present_pos = {}
+                for name, target in goal_pos.items():
+                    primary = shadow_to_primary.get(name)
+                    if primary is not None and primary in goal_pos:
+                        # Shadow motor with matching primary: clamp the primary only, then mirror.
+                        continue
+                    if name in present_pos:
+                        goal_present_pos[name] = (target, present_pos[name])
 
-            if goal_present_pos:
-                safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
-                for name, safe_value in safe_goal_pos.items():
-                    goal_pos[name] = safe_value
-                    shadow = self.shadow_pairs.get(name)
-                    if shadow in goal_pos:
-                        goal_pos[shadow] = safe_value
+                if goal_present_pos:
+                    safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+                    for name, safe_value in safe_goal_pos.items():
+                        goal_pos[name] = safe_value
+                        shadow = self.shadow_pairs.get(name)
+                        if shadow in goal_pos:
+                            goal_pos[shadow] = safe_value
 
         if (
             self.config.show_debugging_graphs
@@ -450,10 +462,55 @@ class ViperX(Robot):
                 self._data_queues["shoulder_shadow_goal_pos"].append(shadow_goal)
 
         if goal_pos:
+            self._last_goal_pos = goal_pos.copy()
             self.bus.sync_write("Goal_Position", goal_pos)
 
         # Return original action for compatibility with downstream logging.
         return action
+
+    def get_shadow_debug_status(self) -> dict[str, dict[str, float | int | None]]:
+        if not self.config.show_debugging_graphs:
+            return {}
+
+        status: dict[str, dict[str, float | int | None]] = {}
+
+        try:
+            present_pos = self.bus.sync_read("Present_Position")
+        except Exception:
+            present_pos = {}
+            logger.debug("%s could not read Present_Position for shadow debug.", self, exc_info=True)
+
+        try:
+            present_currents = self.bus.sync_read("Present_Current", normalize=False)
+        except Exception:
+            present_currents = {}
+            logger.debug("%s could not read Present_Current for shadow debug.", self, exc_info=True)
+
+        for primary, shadow in self.shadow_pairs.items():
+            goal_primary = self._last_goal_pos.get(primary)
+            goal_shadow = self._last_goal_pos.get(shadow, goal_primary)
+            present_primary = present_pos.get(primary)
+            present_shadow = present_pos.get(shadow)
+
+            def _safe_delta(goal: float | None, present: float | None) -> float | None:
+                if goal is None or present is None:
+                    return None
+                try:
+                    return float(goal) - float(present)
+                except (TypeError, ValueError):
+                    return None
+
+            status[primary] = {
+                "goal": goal_primary,
+                "primary_pos": present_primary,
+                "primary_err": _safe_delta(goal_primary, present_primary),
+                "shadow_pos": present_shadow,
+                "shadow_err": _safe_delta(goal_shadow, present_shadow),
+                "primary_current": present_currents.get(primary),
+                "shadow_current": present_currents.get(shadow),
+            }
+
+        return status
 
     def disconnect(self):
         if not self.is_connected:

@@ -304,6 +304,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         if len(self._queues[ACTION]) == 0:
             actions = self._get_action_chunk(batch, noise)
 
+            #print(actions.shape)
+            #print(actions)
+            #import pdb; pdb.set_trace()
+
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])

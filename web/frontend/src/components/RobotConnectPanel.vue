@@ -43,6 +43,9 @@
     <div v-if="error && !isConnected" class="error-details">
       <h4><i class="bi bi-exclamation-triangle me-2"></i>Connection Failed</h4>
       <p>{{ error }}</p>
+      <ul v-if="errorTips.length">
+        <li v-for="tip in errorTips" :key="tip">{{ tip }}</li>
+      </ul>
     </div>
   </div>
 </template>
@@ -56,6 +59,7 @@ import robotApi from '@/services/api/robotApi';
 const robotStore = useRobotStore();
 const busy = ref(false);
 const error = ref('');
+const errorTips = ref([]);
 
 const ROBOT_LABELS = {
   aloha_bimanual: 'ALOHA Bimanual',
@@ -101,7 +105,7 @@ function deriveOperationMode(type){
 
 async function connect(){
   try {
-    busy.value = true; error.value='';
+    busy.value = true; error.value=''; errorTips.value = [];
     // Minimal connect: fetch configs first (if not loaded), then connect using first config
     if (!robotStore.configs || robotStore.configs.length === 0){
       await robotStore.fetchRobotConfigs();
@@ -120,9 +124,18 @@ async function connect(){
     await robotStore.updateStatus();
     emit('connected');
   } catch(e){
-    error.value = e.message || 'Connection error';
-    if ((error.value || '').toLowerCase().includes('calibr')) {
-      emit('connect-error', error.value);
+    const message = e.message || 'Connection error';
+    error.value = message;
+    const lower = message.toLowerCase();
+    if (lower.includes('realsense')) {
+      errorTips.value = [
+        'Unplug and reconnect the affected Intel RealSense camera, then wait a few seconds.',
+        'If the camera still fails to start, power-cycle the USB hub or workstation port.',
+        'After reconnecting the hardware, press “Connect Robot” again.'
+      ];
+    }
+    if ((message || '').toLowerCase().includes('calibr')) {
+      emit('connect-error', message);
     }
   } finally { busy.value=false; }
 }

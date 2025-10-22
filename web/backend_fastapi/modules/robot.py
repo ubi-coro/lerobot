@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 
 import logging
+import re
 import os
 import sys
 
@@ -106,6 +107,23 @@ def _arms_for_mode(mode: Optional[str]) -> List[str]:
     if mode == "right":
         return ["right"]
     return ["left", "right"]
+
+
+def _format_connection_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    if not message:
+        return "Failed to connect to the robot hardware."  # pragma: no cover - fallback
+
+    match = re.search(r"RealSenseCamera\(([^)]+)\)", message)
+    if match:
+        camera_id = match.group(1)
+        return (
+            "Unable to start Intel RealSense camera "
+            f"{camera_id}. Please unplug and reconnect the camera's USB cable, "
+            "power-cycle the USB hub if necessary, and try Connect again."
+        )
+
+    return f"Failed to connect to the robot hardware: {message}"
 
 
 def _build_status(extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -257,11 +275,8 @@ async def connect_robot(request: ConnectRequest):
                 "available_arms": _arms_for_mode(normalized_mode),
             }
         )
-        return ApiResponse(
-            status="success",
-            message="Robot hardware unavailable; mock mode",
-            data=_build_status({"error": str(exc)}),
-        )
+        user_message = _format_connection_error(exc)
+        raise HTTPException(status_code=500, detail=user_message)
 
 
 @router.post("/disconnect", response_model=ApiResponse)

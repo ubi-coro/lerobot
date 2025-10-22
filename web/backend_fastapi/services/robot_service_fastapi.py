@@ -112,7 +112,9 @@ class RobotService:
 
                 self.robot = make_robot_from_config(self.robot_cfg)
                 logger.info("Connecting to robot hardware (ALOHA)...")
-                self.robot.connect(calibrate=False)
+                # Connect with calibration to ensure motor offsets are written correctly
+                # This is critical for proper operation and prevents jumping/erratic behavior
+                self.robot.connect(calibrate=True)
 
                 self.status["connected"] = True
                 self.status["error"] = None

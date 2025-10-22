@@ -41,6 +41,7 @@ from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop as core_record_loop
+from lerobot.policies.policy_utils import load_policy_checkpoint
 from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
@@ -77,6 +78,8 @@ class RecordControlConfig:
     resume: bool = False
     root: Optional[str] = None
     play_sounds: bool = False
+    mode: str = "recording"  # "recording" or "replay"
+    policyPath: Optional[str] = None  # Path to pretrained_model for replay mode
     # Optional future fields we may ignore safely
     save_eval: bool = True
 
@@ -262,6 +265,15 @@ def start_recording_via_api(config: Dict[str, Any]):
     missing = [k for k in required if k not in config]
     if missing:
         raise ValueError(f"Missing required config fields: {missing}")
+    
+    # Validate replay mode requirements
+    mode = config.get("mode", "recording")
+    if mode == "replay":
+        policy_path = config.get("policyPath")
+        if not policy_path:
+            raise ValueError("policyPath is required for replay mode")
+        if not policy_path.endswith("pretrained_model"):
+            raise ValueError("policyPath should end with 'pretrained_model'")
 
     # Sanitize numeric fields to avoid None-related crashes (e.g., coming from JSON null)
     def _num(x, default=None):
@@ -335,6 +347,8 @@ def start_recording_via_api(config: Dict[str, Any]):
         resume=config.get("resume", False),
         root=config.get("root"),
         play_sounds=play_sounds,
+        mode=config.get("mode", "recording"),
+        policyPath=config.get("policyPath"),
     )
 
     # Ensure no None values in cfg to prevent TypeErrors
@@ -490,6 +504,18 @@ def start_recording_via_api(config: Dict[str, Any]):
             if not robot.is_connected:
                 robot.connect()
 
+            # Load policy if in replay mode
+            policy = None
+            preprocessor = None
+            postprocessor = None
+            if cfg.mode == "replay" and cfg.policyPath:
+                try:
+                    logger.info(f"Loading policy from {cfg.policyPath}")
+                    policy = load_policy_checkpoint(cfg.policyPath)
+                    logger.info(f"Policy loaded successfully: {type(policy).__name__}")
+                except Exception as policy_e:
+                    raise RuntimeError(f"Failed to load policy: {policy_e}")
+
             # Proactive camera preflight to surface RealSense issues early and clearly
             try:
                 # Guard against None: pick a safe timeout derived from warmup or a minimum window
@@ -553,9 +579,9 @@ def start_recording_via_api(config: Dict[str, Any]):
                         robot_observation_processor=robot_observation_processor,
                         dataset=dataset,
                         teleop=None,
-                        policy=None,
-                        preprocessor=None,
-                        postprocessor=None,
+                        policy=policy,
+                        preprocessor=preprocessor,
+                        postprocessor=postprocessor,
                         control_time_s=cfg.episode_time_s,
                         single_task=cfg.single_task,
                         display_data=cfg.display_data,
