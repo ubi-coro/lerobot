@@ -1,6 +1,6 @@
 <template>
   <div class="teleoperation-view">
-    <h4>Instruction:</h4>
+    <h1>Teleoperation</h1>
     <h6>
       The connection panel decides whether you operate bimanual or single arm. Pick your environment and any display options, then press <em>Start Teleoperation</em>; hit the <kbd>Space</kbd> bar anytime for an emergency stop.
     </h6>
@@ -403,29 +403,26 @@ onUnmounted(() => {
 
 <style scoped>
 .teleoperation-view {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 1.5rem; /* align with recording view */
+  padding: 1.5rem;
 }
 
-.page-header {
-  margin-bottom: 1.25rem;
+h1 { 
+  margin: 0 0 .75rem; 
+  font-size: 1.8rem; 
+  font-weight:600; 
+  letter-spacing:-0.5px; 
 }
 
-/* Intro paragraph style (left-aligned) */
-.page-intro {
-  font-size: 0.95rem;
-  line-height: 1.45;
-  color: #374151;
-  background: #f3f4f6;
-  padding: 0.85rem 1rem;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
-  margin: 0; /* remove default p margin */
-  text-align: left;
+h6 { 
+  margin: 0 0 1.25rem; 
+  font-size: .75rem; 
+  line-height: 1.6; 
+  opacity: .7; 
 }
 
-.page-intro kbd {
+h6 kbd {
   background: #1f2937;
   color: #f9fafb;
   padding: 0.15rem 0.4rem;
@@ -442,16 +439,21 @@ onUnmounted(() => {
 }
 
 .config-card {
-  background: white;
-  border-radius: 14px; /* match recording section radius */
-  padding: 1.1rem 1.35rem 1.25rem; /* match recording section padding */
+  background: linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);
+  border-radius: 14px;
+  padding: 1.1rem 1.35rem 1.25rem;
   border: 1px solid #e5e7eb;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); /* closer to recording subtle shadow */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
 }
 
 .config-card h3 {
   margin: 0 0 1.5rem 0;
   color: #1f2937;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  opacity: .75;
 }
 
 .config-grid {
@@ -569,10 +571,11 @@ onUnmounted(() => {
 
 /* Operation Status */
 .operation-status {
-  background: white;
+  background: linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);
   border-radius: 14px;
   padding: 1.1rem 1.35rem 1.25rem;
   border: 1px solid #e5e7eb;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
   margin-bottom: 1.75rem;
 }
 
@@ -604,15 +607,21 @@ onUnmounted(() => {
 
 /* Camera Section */
 .camera-section {
-  background: white;
+  background: linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);
   border-radius: 14px;
   padding: 1.1rem 1.35rem 1.25rem;
   border: 1px solid #e5e7eb;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
 }
 
 .camera-section h3 {
   margin: 0 0 1.5rem 0;
   color: #1f2937;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  opacity: .75;
 }
 
 /* Display Data Info */
@@ -754,14 +763,40 @@ onUnmounted(() => {
   font-size: 1.1rem;
 }
 
+/* Dark mode */
+body.dark-mode .teleoperation-view .config-card,
+body.dark-mode .teleoperation-view .operation-status,
+body.dark-mode .teleoperation-view .camera-section {
+  background: linear-gradient(135deg,#1f2937 0%,#111827 100%);
+  border-color: #374151;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+}
+
+body.dark-mode .teleoperation-view h1 {
+  color: #f1f5f9;
+}
+
+body.dark-mode .teleoperation-view h6 {
+  color: #94a3b8;
+}
+
+body.dark-mode .teleoperation-view h3 {
+  color: #cbd5e1;
+}
+
+body.dark-mode .teleoperation-view h6 kbd {
+  background: #374151;
+  color: #e5e7eb;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .teleoperation-view {
     padding: 1rem;
   }
   
-  .page-header h1 {
-    font-size: 2rem;
+  h1 {
+    font-size: 1.5rem;
   }
   
   .status-header {

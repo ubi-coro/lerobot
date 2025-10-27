@@ -1,6 +1,6 @@
 <template>
   <div class="record-dataset-view">
-    <h4>Instruction:</h4>
+    <h1>Record Dataset</h1>
     <h6>
       Fill the required fields (Repo ID, Root Path, Task) and timings, then press <em>Start Recording</em>.
       The status panel shows overall progress and the current phase: Warmup → Recording → Resetting → Processing → Pushing (optional).
@@ -150,7 +150,7 @@ function setRoot(path){ recStore.updateConfig({ root: path }); }
 if (!robotStore.socket) robotStore.initSocket();
 </script>
 
-<style>
+<style scoped>
 .record-dataset-view { padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; max-width:1400px; margin:0 auto; }
 .layout { display: grid; grid-template-columns: minmax(340px,420px) 1fr; gap: 2rem; align-items: start; }
 section { background: linear-gradient(135deg,#ffffff 0%,#f8fafc 100%); border: 1px solid #e5e7eb; border-radius: 14px; padding: 1.1rem 1.35rem 1.25rem; box-shadow: 0 4px 12px rgba(0,0,0,0.04); position:relative; overflow:hidden; }
@@ -158,6 +158,8 @@ section.runtime { display:flex; flex-direction:column; }
 section.config { display:flex; flex-direction:column; }
 h1 { margin: 0 0 .75rem; font-size: 1.8rem; font-weight:600; letter-spacing:-0.5px; }
 h2 { margin: 0 0 .85rem; font-size: 1.05rem; font-weight: 600; text-transform:uppercase; letter-spacing:.06em; opacity:.75; }
+h6 { margin: 0 0 1.25rem; font-size: .75rem; line-height: 1.6; opacity: .7; }
+h6 code { background: #f1f5f9; padding: .15rem .35rem; border-radius: 3px; font-size: .7rem; }
 form { display: flex; flex-direction: column; gap: .9rem; }
 .field { display: flex; flex-direction: column; gap: .35rem; }
 .field label { font-size:.7rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#4b5563; }
@@ -214,6 +216,8 @@ body.dark-mode .overall label .existing-total { color:#94a3b8; }
 body.dark-mode .record-dataset-view section { background:linear-gradient(135deg,#1f2937 0%,#111827 100%); border-color:#374151; box-shadow:0 4px 18px rgba(0,0,0,0.45); }
 body.dark-mode .record-dataset-view h1 { color:#f1f5f9; }
 body.dark-mode .record-dataset-view h2 { color:#cbd5e1; opacity:.9; }
+body.dark-mode .record-dataset-view h6 { color:#94a3b8; }
+body.dark-mode .record-dataset-view h6 code { background:#273549; color:#cbd5e1; }
 body.dark-mode .record-dataset-view .field label { color:#94a3b8; }
 body.dark-mode .record-dataset-view .field input, 
 body.dark-mode .record-dataset-view .field textarea { background:#1e2532; border:1px solid #334155; color:#f1f5f9; }

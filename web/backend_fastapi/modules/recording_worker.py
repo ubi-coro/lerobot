@@ -510,11 +510,32 @@ def start_recording_via_api(config: Dict[str, Any]):
             postprocessor = None
             if cfg.mode == "replay" and cfg.policyPath:
                 try:
+                    from lerobot.policies.factory import make_policy, make_pre_post_processors
+                    from lerobot.processor.rename_processor import rename_stats
+                    from lerobot.configs.policies import PreTrainedConfig
+                    
                     logger.info(f"Loading policy from {cfg.policyPath}")
-                    policy = load_policy_checkpoint(cfg.policyPath)
+                    
+                    # Load policy config and instantiate policy
+                    policy_cfg = PreTrainedConfig.from_pretrained(cfg.policyPath)
+                    policy_cfg.pretrained_path = cfg.policyPath
+                    policy = make_policy(policy_cfg, ds_meta=dataset.meta)
+                    
+                    # Create preprocessor and postprocessor
+                    preprocessor, postprocessor = make_pre_post_processors(
+                        policy_cfg=policy_cfg,
+                        pretrained_path=cfg.policyPath,
+                        dataset_stats=rename_stats(dataset.meta.stats, cfg.rename_map),
+                        preprocessor_overrides={
+                            "device_processor": {"device": policy_cfg.device},
+                            "rename_observations_processor": {"rename_map": cfg.rename_map},
+                        },
+                    )
+                    
                     logger.info(f"Policy loaded successfully: {type(policy).__name__}")
+                    logger.info(f"Preprocessor: {type(preprocessor).__name__}, Postprocessor: {type(postprocessor).__name__}")
                 except Exception as policy_e:
-                    raise RuntimeError(f"Failed to load policy: {policy_e}")
+                    raise RuntimeError(f"Failed to load policy and processors: {policy_e}")
 
             # Proactive camera preflight to surface RealSense issues early and clearly
             try:
